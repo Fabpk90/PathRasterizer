@@ -1,0 +1,332 @@
+﻿// Each #kernel tells which function to compile; you can have many kernels
+#pragma enable_d3d11_debug_symbols
+#pragma kernel CSMain
+
+struct Sphere
+{
+    float3 position;
+    float radius;
+    float4 color;
+    float specular;
+};
+
+struct Ray
+{
+    float3 a;
+    float3 direction;
+    float3 energy; //to be multiplied by the color touched
+};
+
+struct RayHit
+{
+    float3 color;
+    float3 specular;
+    float3 normal;
+    
+    float alpha;
+    float3 position;
+};
+
+struct Mesh 
+{
+    float4x4 localToWorld;
+    int eboOffset;
+    int eboCount;
+};
+
+RWTexture2D<float4> texOut;
+
+Texture2D<float4> skybox;
+SamplerState sampler_skybox;
+
+float4 directionalLight; // w is the intensity
+
+
+
+StructuredBuffer<Sphere> spheres;
+
+StructuredBuffer<Mesh> meshes;
+StructuredBuffer<float3> meshVertices;
+StructuredBuffer<int> meshEbo;
+
+//Texture3D octreeData;
+//Texture3D octreeIndrections;
+
+float4x4 cameraToWorld;
+float4x4 cameraInvProj;
+
+float2 pixelOffset;
+float2 _pixel;
+float seed;
+
+
+static const float EPSILON = 1e-8;
+static const float PI = 3.14159265f;
+
+uint eboCount, spheresCount, meshCount;
+
+float3 getPointAt(Ray r, float alpha)
+{
+   return r.a + (r.direction * alpha);
+}
+// https://stackoverflow.com/questions/12964279/whats-the-origin-of-this-glsl-rand-one-liner
+float rand()
+{
+    float result = frac(sin(seed / 100.0f * dot(_pixel, float2(12.9898f, 78.233f))) * 43758.5453f);
+    seed += 1.0f;
+    return result;
+}
+
+Ray CreateCameraRay(float2 uv)
+{
+    // Transform the camera origin to world space
+    // (0, 0, 0) in localCameraSpace to world
+    float3 origin = mul(cameraToWorld, float4(0.0f, 0.0f, 0.0f, 1.0f)).xyz;
+    
+    // Invert the perspective projection of the view-space position
+    //view space to localCameraSpace
+    float3 direction = mul(cameraInvProj, float4(uv, 0.0f, 1.0f)).xyz;
+    // Transform the direction from camera to world space and normalize
+    direction = mul(cameraToWorld, float4(direction, 0.0f)).xyz;
+    direction = normalize(direction);
+    Ray r;
+    r.a = origin;
+    r.direction = direction;
+    r.energy = (float3)1;
+    return r;
+}
+
+bool sphereIntersection(Ray r, inout RayHit hit, Sphere sphere, float tMin, float tMax)
+{
+    float3 AC = r.a - sphere.position;
+    float c = dot(AC, AC) - sphere.radius * sphere.radius;
+    float a = dot(r.direction, r.direction);
+    float b = dot(r.direction, AC);
+
+    float discriminant = b*b - a * c; // aka delta
+
+    float tempAlpha;
+
+    if(discriminant > 0)
+    {
+        float root = sqrt(discriminant);
+        tempAlpha = (-b - root) / a;
+
+        if(tMin < tempAlpha && tMax > tempAlpha)
+        {
+            float3 surfaceHit = getPointAt(r, tempAlpha);
+            float3 normal = (surfaceHit - sphere.position) / sphere.radius;
+            
+            hit.position = surfaceHit;
+            hit.normal =  normal;
+            
+            hit.color = sphere.color;
+            hit.alpha = tempAlpha;
+            hit.specular = (float3)sphere.specular;
+            return true;
+        }
+
+        tempAlpha = (-b + root) / a;
+
+        if(tMin < tempAlpha && tMax > tempAlpha)
+        {
+            float3 surfaceHit = getPointAt(r, tempAlpha);
+            float3 normal = (surfaceHit - sphere.position) / sphere.radius;
+            
+            hit.position = surfaceHit;
+            hit.normal =  normal;
+            
+            hit.color = sphere.color;
+            hit.alpha = tempAlpha;
+            hit.specular = (float3)sphere.specular;
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+
+// http://fileadmin.cs.lth.se/cs/Personal/Tomas_Akenine-Moller/pubs/raytri_tam.pdf
+//returns true if hits a triangle, filling t with the distance and u and v with barycentric [0] [1]  [2] = 1 - u - v
+bool TriangleIntersection(Ray r, inout RayHit hit, float3 a, float3 b, float3 c)
+{
+    float t, u, v;
+    float3 edge1 = b - a;
+    float3 edge2 = c - a;
+    
+    float3 pVec = cross(r.direction, edge2);
+    double det = dot(pVec, edge1);
+    
+    
+    //back-face culling
+    if(det < EPSILON)
+        return false;
+        
+    float invDet = 1.0f / det;
+    
+    float3 tVec = r.a - a;
+    u = dot(tVec, pVec) * invDet;
+    
+    if(u < 0 || u > 1.0f)
+        return false;
+    
+    float3 qVec = cross(tVec, edge1);
+    v = dot(r.direction, qVec) * invDet;
+    
+    if(v < 0 || v + u > 1.0f)
+        return false;
+        
+    t = dot(edge2, qVec) * invDet;
+    
+    if(t < 0)
+        return false;
+    
+    hit.position = getPointAt(r, t);
+    hit.alpha = t;
+    hit.color = (float3)0;
+    hit.normal = normalize(cross(edge1, edge2));
+    hit.specular = 0.5f;
+    return true;
+}
+
+float3x3 GetTangentSpace(float3 normal)
+{
+    // Choose a helper vector for the cross product
+    float3 helper = float3(1, 0, 0);
+    if (abs(normal.x) > 0.99f)
+        helper = float3(0, 0, 1);
+        
+    // Generate vectors
+    float3 tangent = normalize(cross(normal, helper));
+    float3 binormal = normalize(cross(normal, tangent));
+    return float3x3(tangent, binormal, normal);
+}
+
+float3 SampleHemisphere(float3 normal)
+{
+    // Uniformly sample hemisphere direction
+    float cosTheta = rand();
+    float sinTheta = sqrt(max(0.0f, 1.0f - cosTheta * cosTheta));
+    float phi = 2 * PI * rand();
+    
+    float3 tangentSpaceDir = float3(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
+    
+    // Transform direction to world space
+    return mul(tangentSpaceDir, GetTangentSpace(normal));
+}
+
+void Trace(Ray r, inout RayHit hit)
+{
+    for(uint k = 0; k < spheresCount; ++k)
+    {
+        RayHit tmp = hit;
+        sphereIntersection(r, hit, spheres[k], 0, 100);
+        
+        if(hit.alpha > tmp.alpha)
+            hit = tmp;
+    }
+    
+    bool intersects = false;
+    uint i = 0, ebos = 0;
+    
+    for(uint s = 0; s < meshCount; ++s)
+    {
+        
+        ebos = i + meshes[s].eboCount;
+        for(; i < ebos; i+=3)
+        {
+            RayHit tmp = hit;
+            float4 a = float4(meshVertices[meshEbo[i]], 1);
+            float4 b = float4(meshVertices[meshEbo[i + 1] ], 1);
+            float4 c = float4(meshVertices[meshEbo[i + 2]], 1);
+            
+            a = mul(meshes[s].localToWorld, a);
+            b = mul(meshes[s].localToWorld, b);
+            c = mul(meshes[s].localToWorld, c);
+            
+            intersects = TriangleIntersection(r, tmp, (float3)a, (float3)b, (float3)c);
+            
+            if(hit.alpha > tmp.alpha)
+                hit = tmp;
+        }
+    }
+}
+
+float3 Shade(inout Ray r, RayHit hit)
+{
+    if(hit.alpha > 1000) //we've hitting nothing
+    {
+        //switching to spherical coordinates to sample the skybox
+        float theta = acos(r.direction.y) / -PI;
+        float phi = atan2(r.direction.x, -r.direction.z) / -PI * 0.5f;
+        
+        hit.specular = 0;
+        r.energy = 0;
+
+        return skybox.SampleLevel(sampler_skybox, float2(phi, theta), 0);
+    }
+    else
+    {
+        //sending a ray to the light to see if it's blocked
+        Ray shadowRay;
+        shadowRay.a = hit.position + hit.normal + 0.001f;
+        shadowRay.direction = -1 * directionalLight.xyz;
+        
+        RayHit hitShadow;
+        hitShadow.alpha = 1001;
+        
+        Trace(shadowRay, hitShadow);
+        
+        if(hitShadow.alpha < 1001)
+        {
+            return float3(0, 0, 0);
+        }
+        
+        r.a = hit.position + hit.normal + 0.001f; //just a bit off the surface, for ieee inaccuracy
+        r.direction = SampleHemisphere(hit.normal);
+        r.energy = 2.0f * hit.color * saturate(dot(hit.normal, r.direction));
+       
+       // r.energy *= hit.specular;
+        //the -1 is because the dot of head-on facing vectors return -1, and we want 1
+        //saturate -> [0,1]
+        //return saturate(dot(hit.normal, directionalLight.xyz) * -1) * directionalLight.w * hit.color;
+        
+        return 0.0f;
+    }
+}
+
+[numthreads(8,8,1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+    uint texSizeX, texSizeY;
+    texOut.GetDimensions(texSizeX, texSizeY);
+    uint stride;
+    spheres.GetDimensions(spheresCount, stride);
+
+    meshEbo.GetDimensions(eboCount, stride);
+    meshes.GetDimensions(meshCount, stride);
+    
+    float2 uv;
+    
+    _pixel = id.xy;
+    
+    // [-1;1]
+    uv = (id.xy + pixelOffset) / float2(texSizeX, texSizeY) * 2.0f - 1.0f;
+    Ray r = CreateCameraRay(uv);
+    
+    RayHit hit;
+    float3 color = (float3)0;
+    for(uint i = 0; i < 8; ++i)
+    {
+        hit.alpha = 1001;
+        
+        Trace(r, hit);
+        color += r.energy * Shade(r, hit);
+        
+        if(!any(r.energy))
+            break;
+    } 
+
+    texOut[id.xy] = float4(color, 1.0f);
+}
