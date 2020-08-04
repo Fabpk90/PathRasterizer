@@ -8,6 +8,8 @@ namespace UnityTemplateProjects
         private void Start()
         {
             RayTracingManager.Register(this);
+
+            //GetComponent<MeshRenderer>().enabled = false;
         }
 
         private void OnDisable()

@@ -4,6 +4,7 @@ using System.Linq;
 using UnityEngine;
 using UnityEngine.Experimental.GlobalIllumination;
 using UnityEngine.Rendering;
+using UnityEngine.Rendering.HighDefinition;
 using Random = UnityEngine.Random;
 
 namespace UnityTemplateProjects
@@ -13,15 +14,19 @@ namespace UnityTemplateProjects
     {
         public Vector3 position;
         public float radius;
-        public Color color;
-        public float specular;
-
-        public Sphere(Vector3 position, float radius, Color color, float specular)
+        public Vector3 color;
+        public Vector3 specular;
+        public Vector3 emission;
+        public float smoothness;
+        
+        public Sphere(Vector3 position, float radius, Vector3 color, Vector3 specular, Vector3 emission, float smoothness)
         {
             this.position = position;
             this.radius = radius;
             this.color = color;
             this.specular = specular;
+            this.emission = emission;
+            this.smoothness = smoothness;
         }
 
         public void Move(Vector3 delta)
@@ -37,10 +42,18 @@ namespace UnityTemplateProjects
         public int eboCount;
     }
     
+    public struct MeshBoundingBox
+    {
+        public int indexMesh;
+        public Vector3 max;
+        public Vector3 min;
+    }
+    
     public class RayTracingManager : MonoBehaviour
     {
         public ComputeShader shaderRT;
         public RenderTexture tex;
+        public RenderTexture texDepth;
         public RenderTexture cumulationTex;
         private ComputeBuffer buffer;
         public Texture skybox;
@@ -48,8 +61,10 @@ namespace UnityTemplateProjects
         private ComputeBuffer bufferMeshVertices;
         private ComputeBuffer bufferMeshEbo;
         private ComputeBuffer bufferMeshes;
+        private ComputeBuffer bufferMeshVolumes;
         
         public List<Sphere> spheres;
+        public int sphereAmount;
         public int sphereSeed;
         private int kernelIndex;
 
@@ -60,14 +75,25 @@ namespace UnityTemplateProjects
         private static readonly int Sample = Shader.PropertyToID("_Sample");
         private Material AA;
 
+        private Material Mixer;
+
         private Camera _cam;
         public Light directionalLight;
+        private static readonly int PathTracedTexture = Shader.PropertyToID("_PathTracedTexture");
+        public RenderTexture tex0;
+        private static readonly int PathTracedDepth = Shader.PropertyToID("_PathTracedDepth");
+
+        public static RayTracingManager instance;
+        private Texture2D screenTex;
 
         private void Awake()
         {
             Subscribers = new List<RayTracingSubscriber>();
             _transformsToWatch = new List<Transform>();
             _cam = GetComponent<Camera>();
+            _cam.depthTextureMode |= DepthTextureMode.Depth;
+
+            instance = this;
         }
 
         public static void Register(RayTracingSubscriber sub)
@@ -87,11 +113,30 @@ namespace UnityTemplateProjects
             List<Sphere> sphereList = new List<Sphere>(amount);
             for (int i = 0; i < amount; i++)
             {
-                Sphere s;
-                s.color = Random.ColorHSV();
-                s.position = (Random.insideUnitSphere * 5) + Vector3.forward * 2;
+                Sphere s = new Sphere();
+                float emittingChance = Random.value;
+                
+                if (emittingChance < 0.8f)
+                {
+                    bool metal = Random.value < 0.5f;
+                    Color randomColor = Random.ColorHSV();
+                    
+                    s.color = metal ? Vector3.zero : new Vector3(randomColor.r, randomColor.g, randomColor.b);
+                    s.specular = metal
+                        ? new Vector3(randomColor.r, randomColor.g, randomColor.b)
+                        : new Vector3(0.04f, 0.04f, 0.04f);
+                    s.smoothness = Random.value;
+                }
+                else
+                {
+                    //creates a random light color
+                    Color emission = Random.ColorHSV(0, 1, 0, 1, 3.0f, 8.0f);
+                    s.emission = new Vector3(emission.r, emission.g, emission.b);
+                }
+                
+                s.position = (Random.insideUnitSphere * 10) + Vector3.forward * 2;
                 s.radius = Random.value * 2.0f;
-                s.specular = Random.value;
+                
                 
                 sphereList.Add(s);
             }
@@ -101,6 +146,8 @@ namespace UnityTemplateProjects
 
         private void Start()
         {
+            screenTex = new Texture2D(Screen.width, Screen.height);
+            
             tex = new RenderTexture(Screen.width, Screen.height, 0) {enableRandomWrite = true};
             //tex.format = RenderTextureFormat.RGB111110Float;
             tex.Create();
@@ -109,12 +156,21 @@ namespace UnityTemplateProjects
             cumulationTex.format = tex.format;
             cumulationTex.Create();
             
+            texDepth = new RenderTexture(Screen.width, Screen.height, 0)
+                { format = RenderTextureFormat.R16 ,enableRandomWrite = true};
+            texDepth.Create();
+            
+            tex0 = new RenderTexture(Screen.width, Screen.height, 0);
+            tex0.Create();
+
+            Mixer = new Material(Shader.Find("Hidden/Mixer"));
+            
             AA = new Material(Shader.Find("Hidden/AART"));
 
             Random.InitState(sphereSeed);
-            spheres = GenerateSpheres(4);
+            spheres = GenerateSpheres(sphereAmount);
 
-            buffer = new ComputeBuffer(spheres.Count, sizeof(float) * 9);
+            buffer = new ComputeBuffer(spheres.Count, sizeof(float) * 14);
             buffer.SetData(spheres);
 
             CreateMeshBuffers();
@@ -122,10 +178,12 @@ namespace UnityTemplateProjects
             kernelIndex = shaderRT.FindKernel("CSMain");
             shaderRT.SetTexture(kernelIndex, "texOut", tex);
             shaderRT.SetBuffer(kernelIndex, "spheres", buffer);
+            shaderRT.SetTexture(kernelIndex, "depthOut", texDepth);
             
             shaderRT.SetBuffer(kernelIndex, "meshes", bufferMeshes);
             shaderRT.SetBuffer(kernelIndex, "meshVertices", bufferMeshVertices);
             shaderRT.SetBuffer(kernelIndex, "meshEbo", bufferMeshEbo);
+            shaderRT.SetBuffer(kernelIndex, "meshVolumes", bufferMeshVolumes);
 
             shaderRT.SetMatrix("cameraToWorld", _cam.cameraToWorldMatrix);
             shaderRT.SetMatrix("cameraInvProj", _cam.projectionMatrix.inverse);
@@ -133,18 +191,56 @@ namespace UnityTemplateProjects
             var position = directionalLight.transform.forward;
             shaderRT.SetVector("directionalLight", new Vector4(position.x, position.y, position.z, directionalLight.intensity));
             
+            shaderRT.SetVector("cameraPlanes", new Vector4(_cam.nearClipPlane, _cam.farClipPlane));
+            
             shaderRT.SetTexture(kernelIndex, "skybox", skybox);
             
             shaderRT.Dispatch(kernelIndex, tex.width / 8, tex.height / 8, 1);
 
-            RenderPipelineManager.endFrameRendering += OnEndFrame;
+            RenderPipelineManager.endCameraRendering += RenderPipelineManagerOnendCameraRendering;
         }
+
+        private void RenderPipelineManagerOnendCameraRendering(ScriptableRenderContext arg1, Camera arg2)
+        {
+            if (arg2.name != "Main Camera") return;
+            // if (_sampleRate < 500) //stacking frames for TAA
+            {
+                buffer.SetData(spheres);
+                shaderRT.SetMatrix("cameraToWorld", _cam.cameraToWorldMatrix);
+                shaderRT.SetMatrix("cameraInvProj", _cam.projectionMatrix.inverse);
+                shaderRT.SetFloats("pixelOffset", Random.value, Random.value);
+                shaderRT.SetFloat("seed", Random.value);
+                shaderRT.Dispatch(kernelIndex, tex.width / 8, tex.height / 8, 1);
+            
+                AA.SetFloat(Sample, _sampleRate);
+                _sampleRate++;
+            }
+
+            screenTex.ReadPixels(new Rect(0, 0, Screen.width, Screen.height), 0, 0, false);
+            screenTex.Apply();
+            
+            Graphics.Blit(tex, cumulationTex, AA);
+
+            Mixer.SetTexture(PathTracedTexture, cumulationTex);
+            Mixer.SetTexture(PathTracedDepth, texDepth);
+            
+            CommandBuffer cmd = new CommandBuffer();
+            cmd.Blit(screenTex, arg2.activeTexture, Mixer);
+            
+            arg1.ExecuteCommandBuffer(cmd);
+            cmd.Release();
+
+            //Graphics.Blit(screenTex, arg2.activeTexture, Mixer);
+            //Graphics.Blit(cumulationTex, arg2.camera.activeTexture);
+        }
+
 
         private void CreateMeshBuffers()
         {
             List<Vector3> vertices = new List<Vector3>();
             List<int> ebos = new List<int>();
             List<ShaderMesh> meshObjects = new List<ShaderMesh>(Subscribers.Count);
+            List<MeshBoundingBox> meshBB = new List<MeshBoundingBox>(Subscribers.Count);
 
             for (int i = 0; i < Subscribers.Count; i++)
             {
@@ -162,6 +258,8 @@ namespace UnityTemplateProjects
                 m.eboCount = indices.Length;
                 
                 meshObjects.Add(m);
+                meshBB.Add(new MeshBoundingBox 
+                    {indexMesh = i, max = mesh.bounds.max, min = mesh.bounds.min});
             }
 
             bufferMeshVertices = new ComputeBuffer(vertices.Count, sizeof(float) * 3);
@@ -172,6 +270,9 @@ namespace UnityTemplateProjects
 
             bufferMeshes = new ComputeBuffer(meshObjects.Count, sizeof(float) * 16 + 2 * sizeof(int));
             bufferMeshes.SetData(meshObjects);
+            
+            bufferMeshVolumes = new ComputeBuffer(meshBB.Count, sizeof(float) * 6 + sizeof(int));
+            bufferMeshVolumes.SetData(meshBB);
         }
 
         private void Update()
@@ -227,31 +328,14 @@ namespace UnityTemplateProjects
             }
         }
 
-        private void OnEndFrame(ScriptableRenderContext arg1, Camera[] cameras)
-        {
-            if (_sampleRate < 300) //stacking 300 frames for TAA
-            {
-                buffer.SetData(spheres);
-                shaderRT.SetMatrix("cameraToWorld", _cam.cameraToWorldMatrix);
-                shaderRT.SetMatrix("cameraInvProj", _cam.projectionMatrix.inverse);
-                shaderRT.SetFloats("pixelOffset", Random.value, Random.value);
-                shaderRT.SetFloat("seed", Random.value);
-                shaderRT.Dispatch(kernelIndex, tex.width / 8, tex.height / 8, 1);
-            
-                AA.SetFloat(Sample, _sampleRate);
-                _sampleRate++;
-            }
-            
-
-            Graphics.Blit(tex, cumulationTex, AA);
-            Graphics.Blit(cumulationTex, cameras[0].activeTexture);
-        }
-
         private void OnDisable()
         {
-            RenderPipelineManager.endFrameRendering -= OnEndFrame;
+            RenderPipelineManager.endCameraRendering -= RenderPipelineManagerOnendCameraRendering;
             buffer.Release();
-            buffer.Dispose();
+            bufferMeshes.Release();
+            bufferMeshEbo.Release();
+            bufferMeshVertices.Release();
+            bufferMeshVolumes.Release();
         }
     }
 }
