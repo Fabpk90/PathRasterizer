@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using UnityEngine.Experimental.GlobalIllumination;
+using UnityEngine.Experimental.Rendering;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.HighDefinition;
 using Random = UnityEngine.Random;
@@ -53,7 +54,6 @@ namespace UnityTemplateProjects
     {
         public ComputeShader shaderRT;
         public RenderTexture tex;
-        public RenderTexture texDepth;
         public RenderTexture cumulationTex;
         private ComputeBuffer buffer;
         public Texture skybox;
@@ -156,9 +156,6 @@ namespace UnityTemplateProjects
             cumulationTex.format = tex.format;
             cumulationTex.Create();
             
-            texDepth = new RenderTexture(Screen.width, Screen.height, 0)
-                { format = RenderTextureFormat.R16 ,enableRandomWrite = true};
-            texDepth.Create();
             
             tex0 = new RenderTexture(Screen.width, Screen.height, 0);
             tex0.Create();
@@ -175,11 +172,11 @@ namespace UnityTemplateProjects
 
             CreateMeshBuffers();
 
-            kernelIndex = shaderRT.FindKernel("CSMain");
+            //TODO: make this dynamic
+            kernelIndex = shaderRT.FindKernel("ShadowPass");
             shaderRT.SetTexture(kernelIndex, "texOut", tex);
             shaderRT.SetBuffer(kernelIndex, "spheres", buffer);
-            shaderRT.SetTexture(kernelIndex, "depthOut", texDepth);
-            
+
             shaderRT.SetBuffer(kernelIndex, "meshes", bufferMeshes);
             shaderRT.SetBuffer(kernelIndex, "meshVertices", bufferMeshVertices);
             shaderRT.SetBuffer(kernelIndex, "meshEbo", bufferMeshEbo);
@@ -195,9 +192,18 @@ namespace UnityTemplateProjects
             
             shaderRT.SetTexture(kernelIndex, "skybox", skybox);
             
-            shaderRT.Dispatch(kernelIndex, tex.width / 8, tex.height / 8, 1);
+//            shaderRT.Dispatch(kernelIndex, tex.width / 8, tex.height / 8, 1);
 
             RenderPipelineManager.endCameraRendering += RenderPipelineManagerOnendCameraRendering;
+
+            float depth = Mathf.Abs(0.0923f - 1) * 2.0f - 1.0f;
+            
+            Vector4 uv = new Vector4(0, 0, depth, 1.0f);
+            Vector4 viewPos = _cam.projectionMatrix.inverse * uv;
+            viewPos /= viewPos.w;
+
+            Vector3 worldPos = _cam.cameraToWorldMatrix.inverse * viewPos;
+
         }
 
         private void RenderPipelineManagerOnendCameraRendering(ScriptableRenderContext arg1, Camera arg2)
@@ -215,18 +221,12 @@ namespace UnityTemplateProjects
                 AA.SetFloat(Sample, _sampleRate);
                 _sampleRate++;
             }
+            //Graphics.Blit(tex, cumulationTex, AA);
 
-            screenTex.ReadPixels(new Rect(0, 0, Screen.width, Screen.height), 0, 0, false);
-            screenTex.Apply();
-            
-            Graphics.Blit(tex, cumulationTex, AA);
-
-            Mixer.SetTexture(PathTracedTexture, cumulationTex);
-            Mixer.SetTexture(PathTracedDepth, texDepth);
+            Mixer.SetTexture(PathTracedTexture, tex);
             
             CommandBuffer cmd = new CommandBuffer();
-            cmd.Blit(screenTex, arg2.activeTexture, Mixer);
-            
+            cmd.Blit(tex, arg2.activeTexture, Mixer);
             arg1.ExecuteCommandBuffer(cmd);
             cmd.Release();
 

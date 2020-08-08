@@ -12,7 +12,7 @@
     <ProductVersion>10.0.20506</ProductVersion>
     <SchemaVersion>2.0</SchemaVersion>
     <RootNamespace></RootNamespace>
-    <ProjectGuid>{6C1E57C7-4ACC-A28D-98F2-B14C4D65B9EF}</ProjectGuid>
+    <ProjectGuid>{c7571e6c-cc4a-8da2-98f2-b14c4d65b9ef}</ProjectGuid>
     <OutputType>Library</OutputType>
     <AppDesignerFolder>Properties</AppDesignerFolder>
     <AssemblyName>Assembly-CSharp-Editor</AssemblyName>
@@ -49,14 +49,6 @@
     <ImplicitlyExpandNETStandardFacades>false</ImplicitlyExpandNETStandardFacades>
     <ImplicitlyExpandDesignTimeFacades>false</ImplicitlyExpandDesignTimeFacades>
   </PropertyGroup>
-  <ItemGroup>
-    <Reference Include="UnityEngine">
-      <HintPath>F:\2019.3.15f1\Editor\Data\Managed/UnityEngine/UnityEngine.dll</HintPath>
-    </Reference>
-    <Reference Include="UnityEditor">
-      <HintPath>F:\2019.3.15f1\Editor\Data\Managed/UnityEditor.dll</HintPath>
-    </Reference>
-  </ItemGroup>
   <ItemGroup>
      <Compile Include="Assets\Tayx\Graphy - Ultimate Stats Monitor\Scripts\Editor\GraphyDebuggerEditor.cs" />
      <Compile Include="Assets\Tayx\Graphy - Ultimate Stats Monitor\Scripts\Editor\GraphyManagerEditor.cs" />
@@ -106,6 +98,9 @@
  <Reference Include="Unity.RenderPipelines.HighDefinition.Config.Runtime">
  <HintPath>F:/UnityProject/PathRasterizer/Library/ScriptAssemblies/Unity.RenderPipelines.HighDefinition.Config.Runtime.dll</HintPath>
  </Reference>
+ <Reference Include="Unity.VisualStudio.Editor">
+ <HintPath>F:/UnityProject/PathRasterizer/Library/ScriptAssemblies/Unity.VisualStudio.Editor.dll</HintPath>
+ </Reference>
  <Reference Include="Unity.VisualEffectGraph.Editor">
  <HintPath>F:/UnityProject/PathRasterizer/Library/ScriptAssemblies/Unity.VisualEffectGraph.Editor.dll</HintPath>
  </Reference>
@@ -123,6 +118,9 @@
  </Reference>
  <Reference Include="UnityEditor.UI">
  <HintPath>F:/UnityProject/PathRasterizer/Library/ScriptAssemblies/UnityEditor.UI.dll</HintPath>
+ </Reference>
+ <Reference Include="UnityEngine">
+ <HintPath>F:/2019.3.15f1/Editor/Data/Managed/UnityEngine/UnityEngine.dll</HintPath>
  </Reference>
  <Reference Include="UnityEngine.AIModule">
  <HintPath>F:/2019.3.15f1/Editor/Data/Managed/UnityEngine/UnityEngine.AIModule.dll</HintPath>
@@ -300,6 +298,9 @@
  </Reference>
  <Reference Include="UnityEngine.XRModule">
  <HintPath>F:/2019.3.15f1/Editor/Data/Managed/UnityEngine/UnityEngine.XRModule.dll</HintPath>
+ </Reference>
+ <Reference Include="UnityEditor">
+ <HintPath>F:/2019.3.15f1/Editor/Data/Managed/UnityEditor.dll</HintPath>
  </Reference>
  <Reference Include="UnityEditor.VR">
  <HintPath>F:/2019.3.15f1/Editor/Data/UnityExtensions/Unity/UnityVR/Editor/UnityEditor.VR.dll</HintPath>
@@ -673,12 +674,12 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="Assembly-CSharp.csproj">
-      <Project>{CF70178A-608B-6691-1B1E-0E90BA6F6C11}</Project>
+      <Project>{8a1770cf-8b60-9166-1b1e-0e90ba6f6c11}</Project>
       <Name>Assembly-CSharp</Name>
     </ProjectReference>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
-  <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
+  <!-- To modify your build process, add your task inside one of the targets below and uncomment it.
        Other similar extension points exist, see Microsoft.Common.targets.
   <Target Name="BeforeBuild">
   </Target>
