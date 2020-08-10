@@ -3,6 +3,7 @@
 //#pragma kernel CSMain
 #pragma kernel ShadowPass
 #pragma kernel ReflectionPass
+#pragma kernel AOPass
 
 #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Common.hlsl"
 #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Packing.hlsl"
@@ -46,6 +47,7 @@ struct Mesh
     float4x4 localToWorld;
     int eboOffset;
     int eboCount;
+    float4 color;
 };
 
 struct MeshBoundingBox
@@ -243,7 +245,6 @@ bool TriangleIntersection(Ray r, inout RayHit hit, float3 a, float3 b, float3 c)
     
     hit.position = getPointAt(r, t);
     hit.alpha = t;
-    hit.color = (float3)0;
     hit.normal = normalize(cross(edge1, edge2));
     hit.specular = 0.5f;
     hit.smoothness = 1.0f;
@@ -310,7 +311,11 @@ void Trace(Ray r, inout RayHit hit)
                 intersects = TriangleIntersection(r, tmp, (float3)a, (float3)b, (float3)c);
                 
                 if(hit.alpha > tmp.alpha)
+                {
                     hit = tmp;
+                    hit.color = meshes[s].color;
+                }
+                    
             }
         }
         //else
@@ -370,7 +375,7 @@ float3 Shade(inout Ray r, RayHit hit)
 
 //This is used to compute shadows
 [numthreads(8, 8, 1)]
-void ShadowPass (uint3 id : SV_DispatchThreadID)
+void ShadowPass(uint3 id : SV_DispatchThreadID)
 {
     uint texSizeX, texSizeY;
     texOut.GetDimensions(texSizeX, texSizeY);
@@ -407,19 +412,16 @@ void ShadowPass (uint3 id : SV_DispatchThreadID)
     
     float4 worldPos = mul(cameraToWorld, viewPos);
     
-    float3 N = (float3)0;
-    float3 roughness = (float3)0;
-                
-    NormalData normalData;
-    DecodeFromNormalBuffer(positionSS, normalData);
-    N = normalData.normalWS * linearDepth;
-    
     RayHit hit;
     hit.alpha = cameraPlanes.y + 1;
     
+    NormalData normalData;
+    DecodeFromNormalBuffer(positionSS, normalData);
+    float3 N = normalData.normalWS;
+    
     Ray r;
     
-    r.a = worldPos + N;
+    r.a = worldPos + (N * 0.15f);//adding bias
     r.direction = -directionalLight; 
     //r.invDir = 1 / directionalLight;
     r.energy = (float3)1;//change this according to the material
@@ -428,17 +430,161 @@ void ShadowPass (uint3 id : SV_DispatchThreadID)
     //beware of alpha materials (leaf)
     Trace(r, hit);
     
-    //texOut[id.xy] = (float4)depth;
-    texOut[id.xy] = hit.alpha == cameraPlanes.y + 1;
+    //packing shadows in x and reflections in y,z,w
+    texOut[id.xy] = float4((hit.alpha == cameraPlanes.y + 1), 0.0f, 0.0f, 0.0f);
 }
 
 [numthreads(8, 8, 1)]
-void ReflectionPass (uint3 id : SV_DispatchThreadID)
+void ReflectionPass(uint3 id : SV_DispatchThreadID)
 {
+     //TODO: compute the origin of the ray (depth texture + black magic transformation)
+    // get the direction from the normal buffer
+    // maybe compute the energy of the first hit
     
+     uint texSizeX, texSizeY;
+    texOut.GetDimensions(texSizeX, texSizeY);
+
+    float2 uv = id.xy / float2(texSizeX, texSizeY);
+    
+    float2 uvClip = uv * 2.0f - 1.0f;
+    uint2 positionSS = uv * _ScreenSize.xy;
+    
+    float depth = SampleCameraDepth(uv);
+    float linearDepth = Linear01Depth(depth, _ZBufferParams);
+    
+    float3 N = (float3)0;
+    float roughness = 0;       
+    
+    NormalData normalData;
+    DecodeFromNormalBuffer(positionSS, normalData);
+    N = normalData.normalWS;
+    roughness = normalData.perceptualRoughness;
+    
+    float4 texColor = texOut[id.xy];
+    
+    //sky here, depth is [1, 0]
+    if(linearDepth == 1.0f)
+    {
+        texOut[id.xy] += float4(0, (float3)1);
+        return;
+    }
+    
+    uint stride;
+    spheres.GetDimensions(spheresCount, stride);
+
+    meshEbo.GetDimensions(eboCount, stride);
+    meshes.GetDimensions(meshCount, stride);
+    
+    //mapping to [-1, 1] clip space;
+    depth = abs(depth - 1.0f) * 2.0f - 1.0f;
+    
+    float4 cs = float4(uvClip, depth, 1.0f);
+    float4 viewPos = mul(cameraInvProj, cs);
+    
+    //perspective division
+    viewPos /= viewPos.w; 
+    
+    float4 worldPos = mul(cameraToWorld, viewPos);
+   
+    RayHit hit;
+    hit.alpha = cameraPlanes.y + 1;
+    
+    Ray r;
+    
+    float3 cameraPos = _WorldSpaceCameraPos;
+    
+    float alpha = SmoothnessToPhongAlpha(1 - roughness);
+    //specular reflection
+    
+    float3 direction = (reflect(normalize(worldPos - cameraPos), N));
+    
+    r.a = worldPos;
+    r.direction = direction;
+    r.invDir = 1 / direction;
+    r.energy = (float3)1;//change this according to the material
+    
+    //We can optimize this by stopping at the first hit
+    //beware of alpha materials (leaf)
+    Trace(r, hit);
+    
+    if(hit.alpha > cameraPlanes.y && direction.y > 0) //we've hit nothing
+    {
+        //switching to spherical coordinates to sample the skybox
+        float theta = acos(r.direction.y) / -PI;
+        float phi = atan2(r.direction.x, -r.direction.z) / -PI * 0.5f;
+
+        hit.color = skybox.SampleLevel(sampler_skybox, float2(phi, theta), 0);
+    }
+    
+    //TODO: blur the reflection
+    //packing shadows in x and reflections in y,z,w
+    texOut[id.xy] += float4(0, hit.color);
 }
 
-[numthreads(8,8,1)]
+[numthreads(8, 8, 1)]
+void AOPass(uint3 id : SV_DispatchThreadID)
+{
+     uint texSizeX, texSizeY;
+    texOut.GetDimensions(texSizeX, texSizeY);
+
+    float2 uv = id.xy / float2(texSizeX, texSizeY);
+    
+    float2 uvClip = uv * 2.0f - 1.0f;
+    uint2 positionSS = uv * _ScreenSize.xy;
+    
+    float depth = SampleCameraDepth(uv);
+    float linearDepth = Linear01Depth(depth, _ZBufferParams);
+    
+    //sky here, depth is [1, 0]
+   /* if(linearDepth == 1.0f)
+    {
+        return;
+    }*/
+    
+    uint stride;
+    spheres.GetDimensions(spheresCount, stride);
+
+    meshEbo.GetDimensions(eboCount, stride);
+    meshes.GetDimensions(meshCount, stride);
+    
+    //mapping to [-1, 1] clip space;
+    depth = abs(depth - 1.0f) * 2.0f - 1.0f;
+    
+    float4 cs = float4(uvClip, depth, 1.0f);
+    float4 viewPos = mul(cameraInvProj, cs);
+    
+    //perspective division
+    viewPos /= viewPos.w; 
+    
+    float4 worldPos = mul(cameraToWorld, viewPos);
+    
+    RayHit hit;
+    hit.alpha = cameraPlanes.y + 1;
+    
+    NormalData normalData;
+    DecodeFromNormalBuffer(positionSS, normalData);
+    float3 N = normalData.normalWS;
+    
+    Ray r;
+    float result = 0.0f;
+    
+    for(uint i = 0; i < 4; i++)
+    {}
+    
+    r.a = worldPos + (N * 0.15f);//adding bias
+    r.direction = -directionalLight; 
+    //r.invDir = 1 / directionalLight;
+    r.energy = (float3)1;//change this according to the material
+    
+    //We can optimize this by stopping at the first hit
+    //beware of alpha materials (leaf)
+    Trace(r, hit);
+    
+    //packing shadows in x and reflections in y,z,w
+    texOut[id.xy] = float4((hit.alpha == cameraPlanes.y + 1), 0.0f, 0.0f, 0.0f);
+}
+
+/*[numthreads(8,8,1)]
 void CSMain (uint3 id : SV_DispatchThreadID)
 {
     uint texSizeX, texSizeY;
@@ -456,10 +602,6 @@ void CSMain (uint3 id : SV_DispatchThreadID)
     // [-1;1]
     cameraSpace = (id.xy + pixelOffset) / float2(texSizeX, texSizeY) * 2.0f - 1.0f;
     
-    //TODO: compute the origin of the ray (depth texture + black magic transformation)
-    // get the direction from the normal buffer
-    // maybe compute the energy of the first hit
-    
     //Change this with the deferred data
     //Ray r = CreateCameraRay(cameraSpace);
     
@@ -476,7 +618,7 @@ void CSMain (uint3 id : SV_DispatchThreadID)
     
     float4 cs = float4(positionSS, depth, 1);
     float4 ws = mul(cameraToWorld, cs);
-    /*float3 position = ws.xyz / ws.w;*/
+    //float3 position = ws.xyz / ws.w;
       
     float3 N = (float3)0;
     float3 roughness = (float3)0;
@@ -504,4 +646,4 @@ void CSMain (uint3 id : SV_DispatchThreadID)
     }
     
     texOut[id.xy] = float4(color, 1.0f);
-}
+}*/

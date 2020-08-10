@@ -41,6 +41,7 @@ namespace UnityTemplateProjects
         public Matrix4x4 localToWorld;
         public int eboOffset;
         public int eboCount;
+        public Vector4 color;
     }
     
     public struct MeshBoundingBox
@@ -61,12 +62,12 @@ namespace UnityTemplateProjects
         private ComputeBuffer bufferMeshVertices;
         private ComputeBuffer bufferMeshEbo;
         private ComputeBuffer bufferMeshes;
+        private ComputeBuffer bufferMeshesUV;
         private ComputeBuffer bufferMeshVolumes;
         
         public List<Sphere> spheres;
         public int sphereAmount;
         public int sphereSeed;
-        private int kernelIndex;
 
         private static List<RayTracingSubscriber> Subscribers;
         private static List<Transform> _transformsToWatch;
@@ -79,12 +80,12 @@ namespace UnityTemplateProjects
 
         private Camera _cam;
         public Light directionalLight;
-        private static readonly int PathTracedTexture = Shader.PropertyToID("_PathTracedTexture");
         public RenderTexture tex0;
-        private static readonly int PathTracedDepth = Shader.PropertyToID("_PathTracedDepth");
-
         public static RayTracingManager instance;
         private Texture2D screenTex;
+        private static readonly int PathTracedShadowsReflections = Shader.PropertyToID("_PathTracedShadowsReflections");
+
+        private List<int> kernels;
 
         private void Awake()
         {
@@ -92,6 +93,8 @@ namespace UnityTemplateProjects
             _transformsToWatch = new List<Transform>();
             _cam = GetComponent<Camera>();
             _cam.depthTextureMode |= DepthTextureMode.Depth;
+            
+            kernels = new List<int>();
 
             instance = this;
         }
@@ -116,9 +119,9 @@ namespace UnityTemplateProjects
                 Sphere s = new Sphere();
                 float emittingChance = Random.value;
                 
-                if (emittingChance < 0.8f)
+                if (emittingChance < 0.2f)
                 {
-                    bool metal = Random.value < 0.5f;
+                    bool metal = Random.value < 0.2f;
                     Color randomColor = Random.ColorHSV();
                     
                     s.color = metal ? Vector3.zero : new Vector3(randomColor.r, randomColor.g, randomColor.b);
@@ -142,6 +145,17 @@ namespace UnityTemplateProjects
             }
 
             return sphereList;
+        }
+
+        private void OnDrawGizmos()
+        {
+            if (spheres != null)
+            {
+                foreach (Sphere sphere in spheres)
+                {
+                    Gizmos.DrawWireSphere(sphere.position, sphere.radius);
+                }
+            }
         }
 
         private void Start()
@@ -172,15 +186,25 @@ namespace UnityTemplateProjects
 
             CreateMeshBuffers();
 
-            //TODO: make this dynamic
-            kernelIndex = shaderRT.FindKernel("ShadowPass");
-            shaderRT.SetTexture(kernelIndex, "texOut", tex);
-            shaderRT.SetBuffer(kernelIndex, "spheres", buffer);
+            kernels.Add(shaderRT.FindKernel("ShadowPass"));
+            kernels.Add(shaderRT.FindKernel("ReflectionPass"));
+            //kernels.Add(shaderRT.FindKernel("AOPass"));
+            
 
-            shaderRT.SetBuffer(kernelIndex, "meshes", bufferMeshes);
-            shaderRT.SetBuffer(kernelIndex, "meshVertices", bufferMeshVertices);
-            shaderRT.SetBuffer(kernelIndex, "meshEbo", bufferMeshEbo);
-            shaderRT.SetBuffer(kernelIndex, "meshVolumes", bufferMeshVolumes);
+            foreach (int kernel in kernels)
+            {
+                shaderRT.SetTexture(kernel, "texOut", tex);
+                shaderRT.SetBuffer(kernel, "spheres", buffer);
+            
+                shaderRT.SetBuffer(kernel, "meshes", bufferMeshes);
+                shaderRT.SetBuffer(kernel, "meshVertices", bufferMeshVertices);
+                shaderRT.SetBuffer(kernel, "meshEbo", bufferMeshEbo);
+                shaderRT.SetBuffer(kernel, "meshVolumes", bufferMeshVolumes);
+            
+                shaderRT.SetTexture(kernel, "skybox", skybox);
+            }
+           
+            
 
             shaderRT.SetMatrix("cameraToWorld", _cam.cameraToWorldMatrix);
             shaderRT.SetMatrix("cameraInvProj", _cam.projectionMatrix.inverse);
@@ -190,7 +214,7 @@ namespace UnityTemplateProjects
             
             shaderRT.SetVector("cameraPlanes", new Vector4(_cam.nearClipPlane, _cam.farClipPlane));
             
-            shaderRT.SetTexture(kernelIndex, "skybox", skybox);
+            
             
 //            shaderRT.Dispatch(kernelIndex, tex.width / 8, tex.height / 8, 1);
 
@@ -216,14 +240,19 @@ namespace UnityTemplateProjects
                 shaderRT.SetMatrix("cameraInvProj", _cam.projectionMatrix.inverse);
                 shaderRT.SetFloats("pixelOffset", Random.value, Random.value);
                 shaderRT.SetFloat("seed", Random.value);
-                shaderRT.Dispatch(kernelIndex, tex.width / 8, tex.height / 8, 1);
+
+                foreach (int kernel in kernels)
+                {
+                    shaderRT.Dispatch(kernel, tex.width / 8, tex.height / 8, 1);
+                }
+                
             
                 AA.SetFloat(Sample, _sampleRate);
                 _sampleRate++;
             }
             //Graphics.Blit(tex, cumulationTex, AA);
 
-            Mixer.SetTexture(PathTracedTexture, tex);
+            Mixer.SetTexture(PathTracedShadowsReflections, tex);
             
             CommandBuffer cmd = new CommandBuffer();
             cmd.Blit(tex, arg2.activeTexture, Mixer);
@@ -250,6 +279,8 @@ namespace UnityTemplateProjects
                 ShaderMesh m;
                 m.eboOffset = vertices.Count;
                 m.localToWorld = meshObject.transform.localToWorldMatrix;
+                var c = meshObject.GetComponent<MeshRenderer>().material.color;
+                m.color = c;
 
                 vertices.AddRange(mesh.vertices);
 
@@ -268,7 +299,7 @@ namespace UnityTemplateProjects
             bufferMeshEbo = new ComputeBuffer(ebos.Count, sizeof(int));
             bufferMeshEbo.SetData(ebos);
 
-            bufferMeshes = new ComputeBuffer(meshObjects.Count, sizeof(float) * 16 + 2 * sizeof(int));
+            bufferMeshes = new ComputeBuffer(meshObjects.Count, sizeof(float) * 16 + 2 * sizeof(int) + 4 * sizeof(float));
             bufferMeshes.SetData(meshObjects);
             
             bufferMeshVolumes = new ComputeBuffer(meshBB.Count, sizeof(float) * 6 + sizeof(int));

@@ -3,6 +3,7 @@ using UnityEngine;
 
 namespace UnityTemplateProjects
 {
+    [RequireComponent(typeof(MeshFilter), typeof(MeshRenderer))]
     public class RayTracingSubscriber : MonoBehaviour
     {
         private void Start()
