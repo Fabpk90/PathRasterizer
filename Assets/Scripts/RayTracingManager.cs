@@ -276,6 +276,7 @@ namespace UnityTemplateProjects
                 var meshObject = Subscribers[i].gameObject;
                 var mesh = meshObject.GetComponent<MeshFilter>().sharedMesh;
 
+                //TODO: sort the meshes for the bvh, if we want to include more than a primitive (mesh) in a node
                 ShaderMesh m;
                 m.eboOffset = vertices.Count;
                 m.localToWorld = meshObject.transform.localToWorldMatrix;
