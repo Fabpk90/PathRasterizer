@@ -53,6 +53,7 @@ namespace UnityTemplateProjects
     
     public class RayTracingManager : MonoBehaviour
     {
+        public ComputeShader shaderVertexWorlder;
         public ComputeShader shaderRT;
         public RenderTexture tex;
         public RenderTexture cumulationTex;
@@ -86,6 +87,9 @@ namespace UnityTemplateProjects
         private static readonly int PathTracedShadowsReflections = Shader.PropertyToID("_PathTracedShadowsReflections");
 
         private List<int> kernels;
+
+        public BVHDebuger bvh;
+        private ComputeBuffer BVHBuffer;
 
         private void Awake()
         {
@@ -185,6 +189,7 @@ namespace UnityTemplateProjects
             buffer.SetData(spheres);
 
             CreateMeshBuffers();
+            
 
             kernels.Add(shaderRT.FindKernel("ShadowPass"));
             kernels.Add(shaderRT.FindKernel("ReflectionPass"));
@@ -200,6 +205,7 @@ namespace UnityTemplateProjects
                 shaderRT.SetBuffer(kernel, "meshVertices", bufferMeshVertices);
                 shaderRT.SetBuffer(kernel, "meshEbo", bufferMeshEbo);
                 shaderRT.SetBuffer(kernel, "meshVolumes", bufferMeshVolumes);
+                shaderRT.SetBuffer(kernel, "bvhTree", BVHBuffer);
             
                 shaderRT.SetTexture(kernel, "skybox", skybox);
             }
@@ -233,6 +239,7 @@ namespace UnityTemplateProjects
         private void RenderPipelineManagerOnendCameraRendering(ScriptableRenderContext arg1, Camera arg2)
         {
             if (arg2.name != "Main Camera") return;
+            
             // if (_sampleRate < 500) //stacking frames for TAA
             {
                 buffer.SetData(spheres);
@@ -270,17 +277,21 @@ namespace UnityTemplateProjects
             List<int> ebos = new List<int>();
             List<ShaderMesh> meshObjects = new List<ShaderMesh>(Subscribers.Count);
             List<MeshBoundingBox> meshBB = new List<MeshBoundingBox>(Subscribers.Count);
+            List<MeshRenderer> renderers = new List<MeshRenderer>(Subscribers.Count);
 
             for (int i = 0; i < Subscribers.Count; i++)
             {
                 var meshObject = Subscribers[i].gameObject;
+                var renderer = meshObject.GetComponent<MeshRenderer>();
                 var mesh = meshObject.GetComponent<MeshFilter>().sharedMesh;
+                
+                renderers.Add(renderer);
 
                 //TODO: sort the meshes for the bvh, if we want to include more than a primitive (mesh) in a node
                 ShaderMesh m;
                 m.eboOffset = vertices.Count;
                 m.localToWorld = meshObject.transform.localToWorldMatrix;
-                var c = meshObject.GetComponent<MeshRenderer>().material.color;
+                var c = renderer.material.color;
                 m.color = c;
 
                 vertices.AddRange(mesh.vertices);
@@ -300,11 +311,28 @@ namespace UnityTemplateProjects
             bufferMeshEbo = new ComputeBuffer(ebos.Count, sizeof(int));
             bufferMeshEbo.SetData(ebos);
 
+            shaderVertexWorlder.SetBuffer(0, "meshVertices", bufferMeshVertices);
+
+            ComputeBuffer bufferVertexWorld = new ComputeBuffer(vertices.Count, sizeof(float) * 3);
+            
+            shaderVertexWorlder.SetBuffer(0, "output", bufferVertexWorld);
+
+            shaderVertexWorlder.Dispatch(0, bufferMeshEbo.count / 16, 1, 1);
+            bufferMeshVertices.Release();
+            bufferMeshVertices = bufferVertexWorld;
+            
+
             bufferMeshes = new ComputeBuffer(meshObjects.Count, sizeof(float) * 16 + 2 * sizeof(int) + 4 * sizeof(float));
             bufferMeshes.SetData(meshObjects);
             
             bufferMeshVolumes = new ComputeBuffer(meshBB.Count, sizeof(float) * 6 + sizeof(int));
             bufferMeshVolumes.SetData(meshBB);
+            
+            
+            bvh.BuildBVH(renderers.ToArray());
+            
+            BVHBuffer = new ComputeBuffer(bvh.bvh.flatTree.Length, sizeof(float) * 6 + sizeof(int) * 3);
+            BVHBuffer.SetData(bvh.bvh.flatTree);
         }
 
         private void Update()
@@ -368,6 +396,7 @@ namespace UnityTemplateProjects
             bufferMeshEbo.Release();
             bufferMeshVertices.Release();
             bufferMeshVolumes.Release();
+            BVHBuffer.Release();
         }
     }
 }

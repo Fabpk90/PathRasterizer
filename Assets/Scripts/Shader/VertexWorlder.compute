@@ -1,0 +1,17 @@
+﻿// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel CSMain
+
+// Create a RenderTexture with enableRandomWrite flag and set it
+// with cs.SetTexture
+StructuredBuffer<float3> meshVertices;
+
+RWStructuredBuffer<float3> output;
+
+float4x4 localToWorldMatrix;
+
+[numthreads(16,1,1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+   float4 v = float4(meshVertices[id.x], 1.0f);
+   output[id.x] = mul(localToWorldMatrix, v);
+}

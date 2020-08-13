@@ -8,7 +8,7 @@
 #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Common.hlsl"
 #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Packing.hlsl"
 #include "Packages/com.unity.render-pipelines.high-definition/Runtime/ShaderLibrary/ShaderVariables.hlsl"
-#include "Packages/com.unity.render-pipelines.high-definition/Runtime/Material/Builtin/BuiltinData.hlsl"
+//#include "Packages/com.unity.render-pipelines.high-definition/Runtime/Material/Builtin/BuiltinData.hlsl"
 
 #include "Packages/com.unity.render-pipelines.high-definition/Runtime/Material/NormalBuffer.hlsl"
 
@@ -57,6 +57,16 @@ struct MeshBoundingBox
     float3 min;
 };
 
+//TODO: maybe pack the axis into the nPrimitives
+struct LBVH
+{
+    float3 minBox;
+    float3 maxBox;
+    int offset; //could be second child offset or primitive index // 96
+    int nPrimitives; // 0-> node 
+    int axis;
+};
+
 RWTexture2D<float4> texOut;
 
 Texture2D<float4> skybox;
@@ -71,6 +81,7 @@ StructuredBuffer<Sphere> spheres;
 StructuredBuffer<Mesh> meshes;
 StructuredBuffer<float3> meshVertices;
 StructuredBuffer<int> meshEbo;
+StructuredBuffer<LBVH> bvhTree;
 
 float4x4 cameraToWorld;
 float4x4 cameraInvProj;
@@ -101,21 +112,26 @@ float linearizeDepth(float depth)
 }
 
 //https://tavianator.com/fast-branchless-raybounding-box-intersections-part-2-nans/
-bool rayBoxIntersection(MeshBoundingBox b, Ray r)
+bool rayBoxIntersection(float3 minBox, float3 maxBox, Ray r)
 {
-    float t1 = (b.min[0] - r.a[0]) * r.invDir[0];
-    float t2 = (b.max[0] - r.a[0]) * r.invDir[0];
+    float t1 = (minBox[0] - r.a[0]) * r.invDir[0];
+    float t2 = (maxBox[0] - r.a[0]) * r.invDir[0];
 
     float tmin = min(t1, t2);
     float tmax = max(t1, t2);
  
     for (int i = 1; i < 3; ++i) 
     {
-        t1 = (b.min[i] - r.a[i]) * r.invDir[i];
-        t2 = (b.max[i] - r.a[i]) * r.invDir[i];
+        t1 = (minBox[i] - r.a[i]) * r.invDir[i];
+        t2 = (maxBox[i] - r.a[i]) * r.invDir[i];
  
-        tmin = max(tmin, min(t1, t2));
-        tmax = min(tmax, max(t1, t2));
+        //tmin = max(tmin, min(t1, t2));
+        //tmax = min(tmax, max(t1, t2));
+        
+        
+        tmin = max(tmin, min(min(t1, t2), tmax));
+        tmax = min(tmax, max(max(t1, t2), tmin));
+     
     }
 
     return tmax > max(tmin, 0.0);
@@ -248,6 +264,8 @@ bool TriangleIntersection(Ray r, inout RayHit hit, float3 a, float3 b, float3 c)
     hit.normal = normalize(cross(edge1, edge2));
     hit.specular = 0.5f;
     hit.smoothness = 1.0f;
+    hit.emission = 0.0f;
+    hit.color = 0.0f;
     return true;
 }
 
@@ -278,6 +296,143 @@ float3 SampleHemisphere(float3 normal, float alpha)
     return mul(tangentSpaceDir, GetTangentSpace(normal));
 }
 
+bool TraverseTreeForHit(Ray r)
+{
+    int stackNodes[64];
+    
+    //This is useful to know which branch to choose 
+    // if the axis splits is neg in the ray then we take the right hand branch (second child)
+    // we can do this because we ordered the splitting during the construction
+    bool isDirNeg[] = {r.invDir.x < 0, r.invDir.y < 0, r.invDir.z < 0};
+
+    int toVisitOffset = 0, currentNodeIndex = 0;
+
+    //safeguard for infinite loops
+    int ite = 0;
+
+    while (true && ite < 64)
+    {
+        ite++;
+        LBVH node = bvhTree[currentNodeIndex];
+
+        if (rayBoxIntersection(node.minBox, node.maxBox, r))
+        {
+            if (node.nPrimitives > 0) //it's a leaf
+            {
+                //For now we have only one primitive in the leaf so we can simplify things
+                RayHit tmp;
+                
+                for(int i = meshes[node.offset].eboOffset; i < meshes[node.offset].eboCount; i+=3)
+                {
+                    float4 a = float4(meshVertices[meshEbo[i]], 1);
+                    float4 b = float4(meshVertices[meshEbo[i + 1]], 1);
+                    float4 c = float4(meshVertices[meshEbo[i + 2]], 1);
+                    
+                   // a = mul(meshes[node.offset].localToWorld, a);
+                    //b = mul(meshes[node.offset].localToWorld, b);
+                    //c = mul(meshes[node.offset].localToWorld, c);
+                    
+                    if(TriangleIntersection(r, tmp, (float3)a, (float3)b, (float3)c))
+                        return true;
+                }
+                
+                if (toVisitOffset == 0) return false;
+                currentNodeIndex = stackNodes[--toVisitOffset];
+            }
+            else
+            {
+                if (isDirNeg[node.axis])
+                {
+                    stackNodes[toVisitOffset++] = currentNodeIndex + 1; //left hand child
+                    currentNodeIndex = node.offset;
+                }
+                else
+                {
+                    stackNodes[toVisitOffset++] = node.offset;
+                    currentNodeIndex = currentNodeIndex + 1;
+                }
+            }
+        }
+        else
+        {
+            if (toVisitOffset == 0) return false;
+            currentNodeIndex = stackNodes[--toVisitOffset];
+        }
+    }
+    
+    return false;
+}
+
+void TraverseTree(Ray r, inout RayHit hit)
+{
+    int stackNodes[64];
+    
+    //This is useful to know which branch to choose 
+    // if the axis splits is neg in the ray then we take the right hand branch (second child)
+    // we can do this because we ordered the splitting during the construction
+    bool isDirNeg[] = {r.invDir.x < 0, r.invDir.y < 0, r.invDir.z < 0};
+
+    int toVisitOffset = 0, currentNodeIndex = 0;
+
+    //safeguard for infinite loops
+    int ite = 0;
+
+    while (true && ite < 64)
+    {
+        ite++;
+        LBVH node = bvhTree[currentNodeIndex];
+
+        if (rayBoxIntersection(node.minBox, node.maxBox, r))
+        {
+            if (node.nPrimitives > 0) //it's a leaf
+            {
+                //For now we have only one primitive in the leaf so we can simplify things
+                RayHit tmp = hit;
+                
+                for(int i = meshes[node.offset].eboOffset; i < meshes[node.offset].eboCount; i+=3)
+                {
+                    float4 a = float4(meshVertices[meshEbo[i]], 1);
+                    float4 b = float4(meshVertices[meshEbo[i + 1]], 1);
+                    float4 c = float4(meshVertices[meshEbo[i + 2]], 1); 
+                    
+                   // a = mul(meshes[node.offset].localToWorld, a);
+                   // b = mul(meshes[node.offset].localToWorld, b);
+                    //c = mul(meshes[node.offset].localToWorld, c);
+                    
+                    TriangleIntersection(r, tmp, (float3)a, (float3)b, (float3)c);
+                    
+                    if(hit.alpha > tmp.alpha)
+                    {
+                        hit = tmp;
+                        hit.color = meshes[node.offset].color;
+                    }
+                }
+                
+                if (toVisitOffset == 0) break;
+                currentNodeIndex = stackNodes[--toVisitOffset];
+            }
+            else
+            {
+                if (isDirNeg[node.axis])
+                {
+                    stackNodes[toVisitOffset++] = currentNodeIndex + 1; //left hand child
+                    currentNodeIndex = node.offset;
+                }
+                else
+                {
+                    stackNodes[toVisitOffset++] = node.offset;
+                    currentNodeIndex = currentNodeIndex + 1;
+                }
+            }
+        }
+        else
+        {
+            if (toVisitOffset == 0) break;
+            currentNodeIndex = stackNodes[--toVisitOffset];
+        }
+    }
+}
+
 void Trace(Ray r, inout RayHit hit)
 {
     for(uint k = 0; k < spheresCount; ++k)
@@ -289,39 +444,22 @@ void Trace(Ray r, inout RayHit hit)
             hit = tmp;
     }
     
-    bool intersects = false;
-    uint i = 0, ebos = 0;
+    //Traverse the bvhTree
+    // find the nearest hit if any
     
-    for(uint s = 0; s < meshCount; ++s)
+    TraverseTree(r, hit);
+}
+
+bool Trace(Ray r)
+{
+    RayHit hit;
+    for(uint k = 0; k < spheresCount; ++k)
     {
-        //if(rayBoxIntersection(meshVolumes[s], r))
-        {
-            ebos = i + meshes[s].eboCount;
-            for(; i < ebos; i+=3)
-            {
-                RayHit tmp = hit;
-                float4 a = float4(meshVertices[meshEbo[i]], 1);
-                float4 b = float4(meshVertices[meshEbo[i + 1]], 1);
-                float4 c = float4(meshVertices[meshEbo[i + 2]], 1);
-                
-                a = mul(meshes[s].localToWorld, a);
-                b = mul(meshes[s].localToWorld, b);
-                c = mul(meshes[s].localToWorld, c);
-                
-                intersects = TriangleIntersection(r, tmp, (float3)a, (float3)b, (float3)c);
-                
-                if(hit.alpha > tmp.alpha)
-                {
-                    hit = tmp;
-                    hit.color = meshes[s].color;
-                }
-                    
-            }
-        }
-        //else
-            ebos += meshes[s].eboCount;
-        
+        if(sphereIntersection(r, hit, spheres[k], cameraPlanes.x, cameraPlanes.y))
+            return true;
     }
+    
+    return TraverseTreeForHit(r);
 }
 
 float3 Shade(inout Ray r, RayHit hit)
@@ -373,6 +511,7 @@ float3 Shade(inout Ray r, RayHit hit)
     }
 }
 
+
 //This is used to compute shadows
 [numthreads(8, 8, 1)]
 void ShadowPass(uint3 id : SV_DispatchThreadID)
@@ -423,20 +562,24 @@ void ShadowPass(uint3 id : SV_DispatchThreadID)
     
     r.a = worldPos + (N * 0.15f);//adding bias
     r.direction = -directionalLight; 
-    //r.invDir = 1 / directionalLight;
+    //maybe there is a way to vectorize this ?
+    r.invDir.x = 1 / max(-directionalLight.x, 0.00001f);
+    r.invDir.y = 1 / max(-directionalLight.y, 0.00001f);
+    r.invDir.z = 1 / max(-directionalLight.z, 0.00001f);
     r.energy = (float3)1;//change this according to the material
     
     //We can optimize this by stopping at the first hit
     //beware of alpha materials (leaf)
-    Trace(r, hit);
+    bool hitSomething = Trace(r);
     
     //packing shadows in x and reflections in y,z,w
-    texOut[id.xy] = float4((hit.alpha == cameraPlanes.y + 1), 0.0f, 0.0f, 0.0f);
+    texOut[id.xy] = float4(!hitSomething, 0.0f, 0.0f, 0.0f);
 }
 
 [numthreads(8, 8, 1)]
 void ReflectionPass(uint3 id : SV_DispatchThreadID)
 {
+      //if(id.x & 1) return;
      //TODO: compute the origin of the ray (depth texture + black magic transformation)
     // get the direction from the normal buffer
     // maybe compute the energy of the first hit
@@ -578,7 +721,7 @@ void AOPass(uint3 id : SV_DispatchThreadID)
     
     //We can optimize this by stopping at the first hit
     //beware of alpha materials (leaf)
-    Trace(r, hit);
+//    Trace(r, hit);
     
     //packing shadows in x and reflections in y,z,w
     texOut[id.xy] = float4((hit.alpha == cameraPlanes.y + 1), 0.0f, 0.0f, 0.0f);

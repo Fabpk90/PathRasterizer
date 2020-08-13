@@ -28,16 +28,22 @@ public class BVHNode
         children[0] = child0;
         children[1] = child1;
         
-        boundingBox.Encapsulate(child0.boundingBox);
+        boundingBox = child0.boundingBox;
         boundingBox.Encapsulate(child1.boundingBox);
         meshIndexStart = -1;
+
+        splitAxis = axis;
     }
 }
 
+//TODO: fix this, char is not recognized by the compute buffer so no cache friendliness for now
 public struct LBVH
 {
-    public Bounds bounds;
-    public int offset; //could be child offset or primitive index
+    public Bounds bounds; // 64bits
+    public int offset; //could be second child offset or primitive index // 96
+    public int nPrimitives; // 0-> node 
+    public int axis;
+    //public ushort padding; //ensures that struct is cache friendly (fits in a line) //128 bits
 }
 
 public struct PrimitiveInfo
@@ -71,6 +77,8 @@ public class BVH
     public uint nodeCreated; //used to allocate the memory of the linear tree
 
     private static int maxPrimsInNode = 1;
+
+    public LBVH[] flatTree;
     
     public BVH(Bounds[] bounds, Matrix4x4[] transformPositions)
     {
@@ -101,6 +109,82 @@ public class BVH
         root = RecursiveBuild(0, primitivesInfo.Count, ref orderedInfos);
 
         primitivesInfo = orderedInfos;
+        
+        flatTree = new LBVH[nodeCreated];
+        int offset = 0;
+        
+        FlattenTree(root, ref offset);
+    }
+
+    public (bool, float) RayIntersection(Ray r)
+    {
+        Vector3 invDir = new Vector3(1 / r.direction.x, 1 / r.direction.y, 1 / r.direction.z);
+        int[] stackNodes = new int[64];
+        
+        //This is useful to know which branch to choose 
+        // if the axis splits is neg in the ray then we take the right hand branch (second child)
+        // we can do this because we ordered the splitting during the construction
+        bool[] isDirNeg = {invDir.x < 0, invDir.y < 0, invDir.z < 0};
+
+        int toVisitOffset = 0, currentNodeIndex = 0;
+
+        while (true)
+        {
+            LBVH node = flatTree[currentNodeIndex];
+
+            if (rayBoxIntersection(node.bounds, r))
+            //if(node.bounds.IntersectRay(r, out var distance))
+            {
+                if (node.nPrimitives > 0) //it's a leaf
+                {
+                    //TODO: check for each triangle
+                    return (true, -1);
+                }
+                else
+                {
+                    if (isDirNeg[node.axis])
+                    {
+                        stackNodes[toVisitOffset++] = currentNodeIndex + 1; //left hand child
+                        currentNodeIndex = node.offset;
+                    }
+                    else
+                    {
+                        stackNodes[toVisitOffset++] = node.offset;
+                        currentNodeIndex = currentNodeIndex + 1;
+                    }
+                }
+            }
+            else
+            {
+                if (toVisitOffset == 0) return (false, -1);
+                currentNodeIndex = stackNodes[--toVisitOffset];
+            }
+        }
+    }
+    
+    private bool rayBoxIntersection(Bounds b, Ray r)
+    {
+        //TODO: optimize this by precomputing it
+        Vector3 invDir = new Vector3(1 / r.direction.x, 1 / r.direction.y, 1 / r.direction.z);
+        float t1 = (b.min[0] - r.origin[0]) * invDir[0];
+        float t2 = (b.max[0] - r.origin[0]) * invDir[0];
+
+        float tmin = Mathf.Min(t1, t2);
+        float tmax = Mathf.Max(t1, t2);
+ 
+        for (int i = 1; i < 3; ++i) 
+        {
+            t1 = (b.min[i] - r.origin[i]) * invDir[i];
+            t2 = (b.max[i] - r.origin[i]) * invDir[i];
+ 
+            tmin = Mathf.Max(tmin, Mathf.Min(t1, t2));
+            tmax = Mathf.Min(tmax, Mathf.Max(t1, t2));
+            
+            //tmin = Mathf.Max(tmin, Mathf.Min(Mathf.Min(t1, t2), tmax));
+            //tmax = Mathf.Min(tmax, Mathf.Max(Mathf.Max(t1, t2), tmin));
+        }
+
+        return tmax > Mathf.Max(tmin, 0.0f);
     }
     
     public BVHNode RecursiveBuild(int start, int end, ref List<PrimitiveInfo> orderedInfos)
@@ -295,9 +379,32 @@ public class BVH
         return node;
     }
 
-    private LBVH FlattenTree(BVHNode root)
+    private int FlattenTree(BVHNode node, ref int offset)
     {
-        return new LBVH();
+        LBVH linearNode = new LBVH();
+        linearNode.bounds = node.boundingBox;
+        int myOffset = offset++;
+
+        if (node.children == null)
+        {
+            linearNode.nPrimitives = (ushort) node.meshCount;
+            linearNode.offset = node.meshIndexStart;
+
+            flatTree[myOffset] = linearNode;
+        }
+        else
+        {
+            linearNode.axis = (ushort) node.splitAxis;
+            linearNode.nPrimitives = 0;
+
+            FlattenTree(node.children[0], ref offset);
+
+            linearNode.offset = FlattenTree(node.children[1], ref offset);
+            
+            flatTree[myOffset] = linearNode;
+        }
+
+        return myOffset;
     }
 
     private Vector3 GetRelativePosition(Bounds b, Vector3 point)

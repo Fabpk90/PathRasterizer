@@ -13,12 +13,17 @@ public class CameraRayController : MonoBehaviour
     private OctreeNode n;
     private LinearNode linearN;
 
+    public BVHDebuger bvh;
+
     private int size;
+    private float distance;
 
     private void Start()
     {
         r = Camera.main.ScreenPointToRay(Input.mousePosition);
         size = 1000;
+
+        distance = -1;
     }
 
     // Update is called once per frame
@@ -28,12 +33,13 @@ public class CameraRayController : MonoBehaviour
         {
             r = Camera.main.ScreenPointToRay(Input.mousePosition);
             Stopwatch s = Stopwatch.StartNew();
-            linearN = octree.GetLinearNode(r);
+            var res = bvh.bvh.RayIntersection(r);
             s.Stop();
 
-            if (linearN != null)
+            if (res.Item1)
             {
                 print("yes");
+                distance = res.Item2;
             }
         }
         Debug.DrawLine(r.origin, r.origin + r.direction * 50.0f, Color.red);
@@ -42,9 +48,9 @@ public class CameraRayController : MonoBehaviour
 
     private void OnDrawGizmos()
     {
-        if (linearN != null)
+        if (distance > 0)
         {
-            Gizmos.DrawWireSphere(linearN.bounds.center, 1f);
+            Gizmos.DrawWireSphere(r.GetPoint(distance), 1f);
         }
     }
 }

@@ -6,15 +6,9 @@ using UnityEngine;
 
 public class BVHDebuger : MonoBehaviour
 {
-
     public MeshRenderer[] renderers;
     public BVH bvh; 
     // Start is called before the first frame update
-
-    private void Start()
-    {
-        BuildBVH(renderers);
-    }
 
     public void BuildBVH(MeshRenderer[] renderers)
     {
@@ -34,7 +28,15 @@ public class BVHDebuger : MonoBehaviour
     {
         if (bvh != null)
         {
-           Draw(bvh.root);
+           Draw(bvh.flatTree);
+        }
+    }
+
+    private void Draw(LBVH[] bvhFlatTree)
+    {
+        for (int i = 0; i < bvhFlatTree.Length; i++)
+        {
+            Gizmos.DrawWireCube(bvhFlatTree[i].bounds.center, bvhFlatTree[i].bounds.size);
         }
     }
 
