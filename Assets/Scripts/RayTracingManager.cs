@@ -64,8 +64,7 @@ namespace UnityTemplateProjects
         private ComputeBuffer bufferMeshEbo;
         private ComputeBuffer bufferMeshes;
         private ComputeBuffer bufferMeshesUV;
-        private ComputeBuffer bufferMeshVolumes;
-        
+
         public List<Sphere> spheres;
         public int sphereAmount;
         public int sphereSeed;
@@ -204,7 +203,6 @@ namespace UnityTemplateProjects
                 shaderRT.SetBuffer(kernel, "meshes", bufferMeshes);
                 shaderRT.SetBuffer(kernel, "meshVertices", bufferMeshVertices);
                 shaderRT.SetBuffer(kernel, "meshEbo", bufferMeshEbo);
-                shaderRT.SetBuffer(kernel, "meshVolumes", bufferMeshVolumes);
                 shaderRT.SetBuffer(kernel, "bvhTree", BVHBuffer);
             
                 shaderRT.SetTexture(kernel, "skybox", skybox);
@@ -248,10 +246,8 @@ namespace UnityTemplateProjects
                 shaderRT.SetFloats("pixelOffset", Random.value, Random.value);
                 shaderRT.SetFloat("seed", Random.value);
 
-                foreach (int kernel in kernels)
-                {
-                    shaderRT.Dispatch(kernel, tex.width / 8, tex.height / 8, 1);
-                }
+                shaderRT.Dispatch(0, tex.width / 8, tex.height / 8, 1);
+                shaderRT.Dispatch(1, tex.width / 8, tex.height / 8, 1);
                 
             
                 AA.SetFloat(Sample, _sampleRate);
@@ -276,7 +272,6 @@ namespace UnityTemplateProjects
             List<Vector3> vertices = new List<Vector3>();
             List<int> ebos = new List<int>();
             List<ShaderMesh> meshObjects = new List<ShaderMesh>(Subscribers.Count);
-            List<MeshBoundingBox> meshBB = new List<MeshBoundingBox>(Subscribers.Count);
             List<MeshRenderer> renderers = new List<MeshRenderer>(Subscribers.Count);
 
             for (int i = 0; i < Subscribers.Count; i++)
@@ -285,6 +280,7 @@ namespace UnityTemplateProjects
                 var renderer = meshObject.GetComponent<MeshRenderer>();
                 var mesh = meshObject.GetComponent<MeshFilter>().sharedMesh;
                 
+                print(renderer.transform);
                 renderers.Add(renderer);
 
                 //TODO: sort the meshes for the bvh, if we want to include more than a primitive (mesh) in a node
@@ -301,8 +297,6 @@ namespace UnityTemplateProjects
                 m.eboCount = indices.Length;
                 
                 meshObjects.Add(m);
-                meshBB.Add(new MeshBoundingBox 
-                    {indexMesh = i, max = mesh.bounds.max, min = mesh.bounds.min});
             }
 
             bufferMeshVertices = new ComputeBuffer(vertices.Count, sizeof(float) * 3);
@@ -311,27 +305,23 @@ namespace UnityTemplateProjects
             bufferMeshEbo = new ComputeBuffer(ebos.Count, sizeof(int));
             bufferMeshEbo.SetData(ebos);
 
-            shaderVertexWorlder.SetBuffer(0, "meshVertices", bufferMeshVertices);
+            //shaderVertexWorlder.SetBuffer(0, "meshVertices", bufferMeshVertices);
 
-            ComputeBuffer bufferVertexWorld = new ComputeBuffer(vertices.Count, sizeof(float) * 3);
+            //ComputeBuffer bufferVertexWorld = new ComputeBuffer(vertices.Count, sizeof(float) * 3);
             
-            shaderVertexWorlder.SetBuffer(0, "output", bufferVertexWorld);
+            //shaderVertexWorlder.SetBuffer(0, "output", bufferVertexWorld);
 
-            shaderVertexWorlder.Dispatch(0, bufferMeshEbo.count / 16, 1, 1);
-            bufferMeshVertices.Release();
-            bufferMeshVertices = bufferVertexWorld;
+            //shaderVertexWorlder.Dispatch(0, bufferMeshEbo.count / 1024, 1, 1);
+            //bufferMeshVertices.Release();
+            //bufferMeshVertices = bufferVertexWorld;
             
 
             bufferMeshes = new ComputeBuffer(meshObjects.Count, sizeof(float) * 16 + 2 * sizeof(int) + 4 * sizeof(float));
             bufferMeshes.SetData(meshObjects);
-            
-            bufferMeshVolumes = new ComputeBuffer(meshBB.Count, sizeof(float) * 6 + sizeof(int));
-            bufferMeshVolumes.SetData(meshBB);
-            
-            
+
             bvh.BuildBVH(renderers.ToArray());
             
-            BVHBuffer = new ComputeBuffer(bvh.bvh.flatTree.Length, sizeof(float) * 6 + sizeof(int) * 3);
+            BVHBuffer = new ComputeBuffer(bvh.bvh.flatTree.Length, sizeof(float) * 6 + sizeof(int) * 2);
             BVHBuffer.SetData(bvh.bvh.flatTree);
         }
 
@@ -395,7 +385,6 @@ namespace UnityTemplateProjects
             bufferMeshes.Release();
             bufferMeshEbo.Release();
             bufferMeshVertices.Release();
-            bufferMeshVolumes.Release();
             BVHBuffer.Release();
         }
     }

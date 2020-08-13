@@ -7,9 +7,9 @@ StructuredBuffer<float3> meshVertices;
 
 RWStructuredBuffer<float3> output;
 
-float4x4 localToWorldMatrix;
+float4x4 localToWorldMatrix;//needs to be a buffer to work, each mesh has a different matrix dumb dumb
 
-[numthreads(16,1,1)]
+[numthreads(1024,1,1)]
 void CSMain (uint3 id : SV_DispatchThreadID)
 {
    float4 v = float4(meshVertices[id.x], 1.0f);

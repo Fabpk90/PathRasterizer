@@ -41,8 +41,7 @@ public struct LBVH
 {
     public Bounds bounds; // 64bits
     public int offset; //could be second child offset or primitive index // 96
-    public int nPrimitives; // 0-> node 
-    public int axis;
+    public int primAndAxis; // -> node 
     //public ushort padding; //ensures that struct is cache friendly (fits in a line) //128 bits
 }
 
@@ -132,17 +131,17 @@ public class BVH
         {
             LBVH node = flatTree[currentNodeIndex];
 
-            if (rayBoxIntersection(node.bounds, r))
-            //if(node.bounds.IntersectRay(r, out var distance))
+            //if (rayBoxIntersection(node.bounds, r))
+            if(node.bounds.IntersectRay(r, out var distance))
             {
-                if (node.nPrimitives > 0) //it's a leaf
+                if ((node.primAndAxis & 4294901760) > 0) //it's a leaf
                 {
                     //TODO: check for each triangle
-                    return (true, -1);
+                    return (true, distance);
                 }
                 else
                 {
-                    if (isDirNeg[node.axis])
+                    if (isDirNeg[node.primAndAxis])
                     {
                         stackNodes[toVisitOffset++] = currentNodeIndex + 1; //left hand child
                         currentNodeIndex = node.offset;
@@ -387,15 +386,16 @@ public class BVH
 
         if (node.children == null)
         {
-            linearNode.nPrimitives = (ushort) node.meshCount;
+            int primitives = node.meshCount << 16;
+            linearNode.primAndAxis = primitives;
             linearNode.offset = node.meshIndexStart;
 
             flatTree[myOffset] = linearNode;
         }
         else
         {
-            linearNode.axis = (ushort) node.splitAxis;
-            linearNode.nPrimitives = 0;
+            linearNode.primAndAxis = node.splitAxis;
+            //linearNode.primAndAxis |= (int) (linearNode.primAndAxis ^ 4294901760);
 
             FlattenTree(node.children[0], ref offset);
 
