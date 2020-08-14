@@ -122,16 +122,15 @@ bool rayBoxIntersection(float3 minBox, float3 maxBox, Ray r)
         t1 = (minBox[i] - r.a[i]) * r.invDir[i];
         t2 = (maxBox[i] - r.a[i]) * r.invDir[i];
  
-        tmin = max(tmin, min(t1, t2));
-        tmax = min(tmax, max(t1, t2));
+       // tmin = max(tmin, min(t1, t2));
+       // tmax = min(tmax, max(t1, t2));
         
-        
-        //tmin = max(tmin, min(min(t1, t2), tmax));
-        //tmax = min(tmax, max(max(t1, t2), tmin));
+        tmin = max(tmin, min(min(t1, t2), tmax));
+        tmax = min(tmax, max(max(t1, t2), tmin));
      
     }
 
-    return tmax > max(tmin, 0.0);
+    return tmax >= max(tmin, 0.0) || tmin < 0.0;//accounts for ray inside the box
 }
 
 float3 getPointAt(Ray r, float alpha)
@@ -310,8 +309,10 @@ bool TraverseTreeForHit(Ray r)
 
         if (rayBoxIntersection(node.minBox, node.maxBox, r))
         {
-            if ( (node.primAndAxis & 4294901760) > 0) //it's a leaf, for true number >> 16
+            int n = node.primAndAxis >> 16;
+            if (n > 0) //it's a leaf, for true number >> 16
             {
+                
                 //For now we have only one primitive in the leaf so we can simplify things
                 RayHit tmp;
                 float4x4 localToWorldMatrix = meshes[node.offset].localToWorld;
@@ -325,9 +326,11 @@ bool TraverseTreeForHit(Ray r)
                     a = mul(localToWorldMatrix, a);
                     b = mul(localToWorldMatrix, b);
                     c = mul(localToWorldMatrix, c);
+
                     
                     if(TriangleIntersection(r, tmp, (float3)a, (float3)b, (float3)c))
                         return true;
+                        
                 }
                 
                 if (toVisitOffset == 0) return false;
@@ -335,7 +338,7 @@ bool TraverseTreeForHit(Ray r)
             }
             else
             {
-                if (isDirNeg[(node.primAndAxis)])
+                if (isDirNeg[(node.primAndAxis & 7)])
                 {
                     stackNodes[toVisitOffset++] = currentNodeIndex + 1; //left hand child
                     currentNodeIndex = node.offset;
@@ -353,7 +356,7 @@ bool TraverseTreeForHit(Ray r)
             currentNodeIndex = stackNodes[--toVisitOffset];
         }
     }
-    
+
     return false;
 }
 
@@ -389,6 +392,9 @@ void TraverseTree(Ray r, inout RayHit hit)
                     a = mul(localToWorldMatrix, a);
                     b = mul(localToWorldMatrix, b);
                     c = mul(localToWorldMatrix, c);
+
+                    hit.color = float3(1.0, 0, 0);
+                    return;
                     
                     TriangleIntersection(r, tmp, (float3)a, (float3)b, (float3)c);
                     
@@ -404,7 +410,7 @@ void TraverseTree(Ray r, inout RayHit hit)
             }
             else
             {
-                if (isDirNeg[node.primAndAxis])
+                if (isDirNeg[node.primAndAxis & 7])
                 {
                     stackNodes[toVisitOffset++] = currentNodeIndex + 1; //left hand child
                     currentNodeIndex = node.offset;
@@ -567,7 +573,7 @@ void ShadowPass(uint3 id : SV_DispatchThreadID)
 [numthreads(8, 8, 1)]
 void ReflectionPass(uint3 id : SV_DispatchThreadID)
 {
-      //if(id.x & 1) return;
+      if(id.x & 1) return;
      //TODO: compute the origin of the ray (depth texture + black magic transformation)
     // get the direction from the normal buffer
     // maybe compute the energy of the first hit
@@ -583,20 +589,19 @@ void ReflectionPass(uint3 id : SV_DispatchThreadID)
     float depth = SampleCameraDepth(uv);
     float linearDepth = Linear01Depth(depth, _ZBufferParams);
     
-    float3 N = (float3)0;
-    //float roughness = 0;       
-    
-    NormalData normalData;
-    DecodeFromNormalBuffer(positionSS, normalData);
-    N = normalData.normalWS;
-    //roughness = normalData.perceptualRoughness;
-    
+ 
     //sky here, depth is [1, 0]
     if(linearDepth == 1.0f)
     {
         texOut[id.xy] += float4(0, (float3)1);
         return;
     }
+    
+    float3 N = (float3)0;  
+    NormalData normalData;
+    DecodeFromNormalBuffer(positionSS, normalData);
+    N = normalData.normalWS;
+    //roughness = normalData.perceptualRoughness;
     
     uint stride;
     spheres.GetDimensions(spheresCount, stride);
@@ -648,7 +653,7 @@ void ReflectionPass(uint3 id : SV_DispatchThreadID)
 [numthreads(8, 8, 1)]
 void AOPass(uint3 id : SV_DispatchThreadID)
 {
-     uint texSizeX, texSizeY;
+    uint texSizeX, texSizeY;
     texOut.GetDimensions(texSizeX, texSizeY);
 
     float2 uv = id.xy / float2(texSizeX, texSizeY);

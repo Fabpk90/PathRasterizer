@@ -387,6 +387,7 @@ public class BVH
         if (node.children == null)
         {
             int primitives = node.meshCount << 16;
+            int n = (int) (primitives & 4294901760);
             linearNode.primAndAxis = primitives;
             linearNode.offset = node.meshIndexStart;
 
