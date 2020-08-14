@@ -285,17 +285,17 @@ namespace UnityTemplateProjects
 
                 //TODO: sort the meshes for the bvh, if we want to include more than a primitive (mesh) in a node
                 ShaderMesh m;
-                m.eboOffset = vertices.Count;
+                m.eboOffset = ebos.Count;
                 m.localToWorld = meshObject.transform.localToWorldMatrix;
                 var c = renderer.material.color;
                 m.color = c;
 
+                var indices = mesh.GetIndices(0);
+                ebos.AddRange(indices.Select(index => index + vertices.Count));
+                m.eboCount = ebos.Count;
+                
                 vertices.AddRange(mesh.vertices);
 
-                var indices = mesh.GetIndices(0);
-                ebos.AddRange(indices.Select(index => index + m.eboOffset));
-                m.eboCount = indices.Length;
-                
                 meshObjects.Add(m);
             }
 

@@ -6,7 +6,7 @@
 #pragma kernel AOPass
 
 #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Common.hlsl"
-#include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Packing.hlsl"
+//#include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Packing.hlsl"
 #include "Packages/com.unity.render-pipelines.high-definition/Runtime/ShaderLibrary/ShaderVariables.hlsl"
 //#include "Packages/com.unity.render-pipelines.high-definition/Runtime/Material/Builtin/BuiltinData.hlsl"
 
@@ -584,14 +584,12 @@ void ReflectionPass(uint3 id : SV_DispatchThreadID)
     float linearDepth = Linear01Depth(depth, _ZBufferParams);
     
     float3 N = (float3)0;
-    float roughness = 0;       
+    //float roughness = 0;       
     
     NormalData normalData;
     DecodeFromNormalBuffer(positionSS, normalData);
     N = normalData.normalWS;
-    roughness = normalData.perceptualRoughness;
-    
-    float4 texColor = texOut[id.xy];
+    //roughness = normalData.perceptualRoughness;
     
     //sky here, depth is [1, 0]
     if(linearDepth == 1.0f)
@@ -622,12 +620,7 @@ void ReflectionPass(uint3 id : SV_DispatchThreadID)
     
     Ray r;
     
-    float3 cameraPos = _WorldSpaceCameraPos;
-    
-    float alpha = SmoothnessToPhongAlpha(1 - roughness);
-    //specular reflection
-    
-    float3 direction = (reflect(normalize(worldPos - cameraPos), N));
+    float3 direction = (reflect(normalize(worldPos - _WorldSpaceCameraPos), N));
     
     r.a = worldPos;
     r.direction = direction;
