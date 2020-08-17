@@ -275,6 +275,34 @@ namespace UnityTemplateProjects
             List<ShaderMesh> meshObjects = new List<ShaderMesh>(Subscribers.Count);
             List<MeshRenderer> renderers = new List<MeshRenderer>(Subscribers.Count);
             List<Vector2Int> meshesVertexOffsets = new List<Vector2Int>(Subscribers.Count);
+            
+            
+            foreach (RayTracingSubscriber subscriber in Subscribers)
+            {
+                var renderer = subscriber.GetComponent<MeshRenderer>();
+                renderers.Add(renderer);
+            }
+            
+            //TODO: try to launch a thread that updates the bvh, concurrently dispatch the cs, join the thread after that
+            //TODO: update bvh, update meshes vertices infos
+            Bounds[] bounds = new Bounds[renderers.Count];
+            Matrix4x4[] localToWorlds = new Matrix4x4[renderers.Count];
+            for (int i = 0; i < renderers.Count; i++)
+            {
+                bounds[i] = renderers[i].bounds;
+                localToWorlds[i] = renderers[i].transform.localToWorldMatrix;
+            }
+            
+            bvh.bvh = new BVH(bounds, localToWorlds, ref Subscribers);
+            
+            renderers.Clear();
+
+           /* Thread thread = new Thread(o =>
+            {
+               
+            });
+            thread.Start();
+            thread.Join();*/
 
             for (int i = 0; i < Subscribers.Count; i++)
             {
@@ -315,24 +343,22 @@ namespace UnityTemplateProjects
             bufferMeshes = new ComputeBuffer(meshObjects.Count, sizeof(float) * 16 + 2 * sizeof(int) + 4 * sizeof(float));
             bufferMeshes.SetData(meshObjects);
 
-            //TODO: try to launch a thread that updates the bvh, concurrently dispatch the cs, join the thread after that
-            //TODO: update bvh, update meshes vertices infos
-            Bounds[] bounds = new Bounds[renderers.Count];
-            Matrix4x4[] localToWorlds = new Matrix4x4[renderers.Count];
-            for (int i = 0; i < renderers.Count; i++)
+            
+           for (int i = 0; i < meshObjects.Count; i++)
             {
-                bounds[i] = renderers[i].bounds;
-                localToWorlds[i] = renderers[i].transform.localToWorldMatrix;
+                Vector2Int m = meshesVertexOffsets[i];
+                Matrix4x4 localToWorld = meshObjects[i].localToWorld;
+                for (int j = m.x ; j < m.y; j++)
+                {
+                    Vector4 v = vertices[j];
+                    v.w = 1.0f;
+
+                    vertices[j] = localToWorld * v;
+                }
             }
-            
-            Thread thread = new Thread(o =>
-            {
-                bvh.bvh = new BVH(bounds, localToWorlds);
-            });
-            thread.Start();
-            
+
             //TODO: make this a compute shader
-            Thread th = new Thread(o =>
+           /* Thread th = new Thread(o =>
             {
                 for (int i = 0; i < meshObjects.Count; i++)
                 {
@@ -349,8 +375,7 @@ namespace UnityTemplateProjects
             });
             th.Start();
             
-            thread.Join();
-            th.Join();
+            th.Join();*/
             
             bufferMeshVertices = new ComputeBuffer(vertices.Count, sizeof(float) * 3);
             bufferMeshVertices.SetData(vertices);

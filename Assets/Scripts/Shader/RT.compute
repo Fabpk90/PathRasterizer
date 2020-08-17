@@ -110,11 +110,11 @@ float linearizeDepth(float depth)
 //https://tavianator.com/fast-branchless-raybounding-box-intersections-part-2-nans/
 bool rayBoxIntersection(float3 minBox, float3 maxBox, Ray r)
 {
-    double t1 = (minBox[0] - r.a[0]) * r.invDir[0];
-    double t2 = (maxBox[0] - r.a[0]) * r.invDir[0];
+    float t1 = (minBox[0] - r.a[0]) * r.invDir[0];
+    float t2 = (maxBox[0] - r.a[0]) * r.invDir[0];
 
-    double tmin = min(t1, t2);
-    double tmax = max(t1, t2);
+    float tmin = min(t1, t2);
+    float tmax = max(t1, t2);
  
     for (int i = 1; i < 3; ++i) 
     {
@@ -129,7 +129,7 @@ bool rayBoxIntersection(float3 minBox, float3 maxBox, Ray r)
      
     }
 
-    return tmax >= max(tmin, 0.0) || tmax < 0.0;//accounts for rays inside the box
+    return tmax >= max(tmin, 0.0);// || tmax < 0.0;
 }
 
 float3 getPointAt(Ray r, float alpha)
@@ -325,7 +325,7 @@ float3 SampleHemisphere(float3 normal, float alpha)
 
 bool TraverseTreeForHit(Ray r)
 {
-    int stackNodes[16];
+    int stackNodes[64];
     
     //This is useful to know which branch to choose 
     // if the axis splits is neg in the ray then we take the right hand branch (second child)
@@ -340,30 +340,35 @@ bool TraverseTreeForHit(Ray r)
 
         if (rayBoxIntersection(node.minBox, node.maxBox, r))
         {
-            if ((node.primAndAxis >> 16)) //it's a leaf
+            int primitives = (node.primAndAxis >> 16);
+            if ( primitives > 0) //it's a leaf
             {
 
-                //return true;
+               // return true;
                 //For now we have only one primitive in the leaf so we can simplify things
                // float4x4 localToWorldMatrix = meshes[node.offset].localToWorld;
-                
-                int count = meshes[node.offset].eboCount;
-                float4 a,b,c;
-                for(int i = meshes[node.offset].eboOffset; i < count; i+=3)
-                {
-                    a = float4(meshVertices[meshEbo[i]], 1);
-                    b = float4(meshVertices[meshEbo[i + 1]], 1);
-                    c = float4(meshVertices[meshEbo[i + 2]], 1);
+
+                //for (uint mesh = node.offset; mesh < primitives; ++mesh)
+               // {
+                    int count = meshes[node.offset].eboCount;
+                    float4 a,b,c;
+                    for(int i = meshes[node.offset].eboOffset; i < count; i+=3)
+                    {
+                        a = float4(meshVertices[meshEbo[i]], 1);
+                        b = float4(meshVertices[meshEbo[i + 1]], 1);
+                        c = float4(meshVertices[meshEbo[i + 2]], 1);
                     
-                   // a = mul(localToWorldMatrix, a);
-                   // b = mul(localToWorldMatrix, b);
-                    //c = mul(localToWorldMatrix, c);
+                       //  a = mul(localToWorldMatrix, a);
+                      //   b = mul(localToWorldMatrix, b);
+                      //  c = mul(localToWorldMatrix, c);
 
                     
-                    if(TriangleIntersectionHit(r, (float3)a, (float3)b, (float3)c))
-                        return true;
+                        if(TriangleIntersectionHit(r, (float3)a, (float3)b, (float3)c))
+                            return true;
                         
-                }
+                    }
+                //}
+               
                 
                 if (toVisitOffset == 0) return false;
                 currentNodeIndex = stackNodes[--toVisitOffset];
@@ -394,7 +399,7 @@ bool TraverseTreeForHit(Ray r)
 
 void TraverseTree(Ray r, inout RayHit hit)
 {
-    int stackNodes[16];
+    int stackNodes[32];
     
     //This is useful to know which branch to choose 
     // if the axis splits is neg in the ray then we take the right hand branch (second child)

@@ -5,6 +5,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
+using UnityTemplateProjects;
 
 public class BVHNode
 {
@@ -78,13 +79,15 @@ public class BVH
     private static int maxPrimsInNode = 1;
 
     public LBVH[] flatTree;
+
+    private List<RayTracingSubscriber> subs;
     
-    public BVH(Bounds[] bounds, Matrix4x4[] transformPositions)
+    public BVH(Bounds[] bounds, Matrix4x4[] transformPositions, ref List<RayTracingSubscriber> subs)
     {
         /*
          * TODO: 1) Create the primInfo for each mesh 2) create the Tree with pointer and SAH 3) Linearize
          */
-        
+        this.subs = subs;
         primitivesInfo = new List<PrimitiveInfo>(transformPositions.Length);
         
         for (int i = 0; i < transformPositions.Length; i++)
@@ -103,11 +106,15 @@ public class BVH
             buckets[i] = new BucketInfo();
         }
         
-        List<PrimitiveInfo> orderedInfos = new List<PrimitiveInfo>(primitivesInfo.Count);
+        List<RayTracingSubscriber> orderedInfos = new List<RayTracingSubscriber>(primitivesInfo.Count);
         
         root = RecursiveBuild(0, primitivesInfo.Count, ref orderedInfos);
 
-        primitivesInfo = orderedInfos;
+       // primitivesInfo = orderedInfos;
+
+
+        subs.Clear();
+        subs.AddRange(orderedInfos);
         
         flatTree = new LBVH[nodeCreated];
         int offset = 0;
@@ -186,7 +193,7 @@ public class BVH
         return tmax > Mathf.Max(tmin, 0.0f);
     }
     
-    public BVHNode RecursiveBuild(int start, int end, ref List<PrimitiveInfo> orderedInfos)
+    public BVHNode RecursiveBuild(int start, int end, ref List<RayTracingSubscriber> orderedInfos)
     {
         nodeCreated++;
         //taking the first as start because a new bounds starts at (0, 0, 0) and is considered a box to encapsulate
@@ -207,7 +214,7 @@ public class BVH
             int primitivesOffset = orderedInfos.Count;
             
             int primitiveNumber = primitivesInfo[start].primitiveIndex;
-            orderedInfos.Add(primitivesInfo[primitiveNumber]);
+            orderedInfos.Add(subs[primitiveNumber]);
             
             return new BVHNode(primitivesOffset, 1, bounds);
         }
@@ -232,21 +239,21 @@ public class BVH
                 for (int i = start; i < end; i++)
                 {
                     int primitiveNumber = primitivesInfo[i].primitiveIndex;
-                    orderedInfos.Add(primitivesInfo[primitiveNumber]);
+                    orderedInfos.Add(subs[primitiveNumber]);
                 }
 
                 return new BVHNode(primitivesOffset, primitives, bounds);
             }
             else
             {
-                if (primitives == 2)
+                if (primitives <= 2)
                 {
                     //using equally sized subsets as it's cheaper
                     //just swap the 2 primitives
                     // if a.centroid[dim] < b.centroid[dim]
-//                    Debug.Log(start);
-//                    Debug.Log(end);
-//                    Debug.Log(mid);
+                    Debug.Log(start);
+                    Debug.Log(end);
+                    Debug.Log(mid);
                     var prim0 = primitivesInfo[start];
                     var prim1 = primitivesInfo[start + 1];
 
@@ -362,7 +369,7 @@ public class BVH
                         for (int i = start; i < end; i++)
                         {
                             int primitiveNumber = primitivesInfo[i].primitiveIndex;
-                            orderedInfos.Add(primitivesInfo[primitiveNumber]);
+                            orderedInfos.Add(subs[primitiveNumber]);
                         }
 
                         return new BVHNode(primitivesOffset, primitives, bounds);
@@ -388,9 +395,15 @@ public class BVH
         if (node.children == null)
         {
             int primitives = node.meshCount << 16;
-            int n = (int) (primitives & 4294901760);
+            if (node.meshCount > 1)
+            {
+                Debug.Log("fuck" + node.meshCount);
+            }
+            int n = (int) (primitives >> 16);
             linearNode.primAndAxis = primitives;
             linearNode.offset = node.meshIndexStart;
+            
+            Debug.Log(linearNode.offset);
 
             flatTree[myOffset] = linearNode;
         }
