@@ -310,7 +310,7 @@ namespace UnityTemplateProjects
                 var renderer = meshObject.GetComponent<MeshRenderer>();
                 var mesh = meshObject.GetComponent<MeshFilter>().sharedMesh;
                 
-                print(renderer.transform);
+//                print(renderer.transform);
                 renderers.Add(renderer);
 
                 //TODO: sort the meshes for the bvh, if we want to include more than a primitive (mesh) in a node

@@ -76,7 +76,7 @@ public class BVH
 
     public uint nodeCreated; //used to allocate the memory of the linear tree
 
-    private static int maxPrimsInNode = 1;
+    private static int maxPrimsInNode = 4;
 
     public LBVH[] flatTree;
 
@@ -251,9 +251,9 @@ public class BVH
                     //using equally sized subsets as it's cheaper
                     //just swap the 2 primitives
                     // if a.centroid[dim] < b.centroid[dim]
-                    Debug.Log(start);
-                    Debug.Log(end);
-                    Debug.Log(mid);
+                   // Debug.Log(start);
+                   // Debug.Log(end);
+                   // Debug.Log(mid);
                     var prim0 = primitivesInfo[start];
                     var prim1 = primitivesInfo[start + 1];
 
@@ -403,7 +403,7 @@ public class BVH
             linearNode.primAndAxis = primitives;
             linearNode.offset = node.meshIndexStart;
             
-            Debug.Log(linearNode.offset);
+//            Debug.Log(linearNode.offset);
 
             flatTree[myOffset] = linearNode;
         }

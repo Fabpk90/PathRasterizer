@@ -325,7 +325,7 @@ float3 SampleHemisphere(float3 normal, float alpha)
 
 bool TraverseTreeForHit(Ray r)
 {
-    int stackNodes[64];
+    int stackNodes[32];
     
     //This is useful to know which branch to choose 
     // if the axis splits is neg in the ray then we take the right hand branch (second child)
@@ -344,15 +344,16 @@ bool TraverseTreeForHit(Ray r)
             if ( primitives > 0) //it's a leaf
             {
 
-               // return true;
+                //return true;
                 //For now we have only one primitive in the leaf so we can simplify things
                // float4x4 localToWorldMatrix = meshes[node.offset].localToWorld;
 
-                //for (uint mesh = node.offset; mesh < primitives; ++mesh)
-               // {
-                    int count = meshes[node.offset].eboCount;
+                for (uint ite = 0; ite < primitives; ++ite)
+                {
+                    uint mesh = node.offset + ite;
+                    int count = meshes[mesh].eboCount;
                     float4 a,b,c;
-                    for(int i = meshes[node.offset].eboOffset; i < count; i+=3)
+                    for(uint i = meshes[mesh].eboOffset; i < count; i+=3)
                     {
                         a = float4(meshVertices[meshEbo[i]], 1);
                         b = float4(meshVertices[meshEbo[i + 1]], 1);
@@ -367,7 +368,7 @@ bool TraverseTreeForHit(Ray r)
                             return true;
                         
                     }
-                //}
+                }
                
                 
                 if (toVisitOffset == 0) return false;
