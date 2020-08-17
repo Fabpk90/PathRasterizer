@@ -50,7 +50,8 @@ Shader "Hidden/Mixer"
                 return o;
             }
             
-            TEXTURE2D(_PathTracedShadowsReflections);
+            TEXTURE2D(_TracedShadows);
+            TEXTURE2D(_TracedReflections);
 
             float4 frag (v2f i) : SV_Target
             {
@@ -59,15 +60,15 @@ Shader "Hidden/Mixer"
                 //flipping Y
                 i.texcoord.y = abs(i.texcoord.y - 1);
                 
-                float4 shadowAndReflections = SAMPLE_TEXTURE2D(_PathTracedShadowsReflections, s_trilinear_clamp_sampler, i.texcoord);
-                float3 reflection = shadowAndReflections.yzw;
-                float shadow = shadowAndReflections.x;
+                float shadow = SAMPLE_TEXTURE2D(_TracedShadows, s_trilinear_clamp_sampler, i.texcoord);
+                float3 reflections = SAMPLE_TEXTURE2D(_TracedReflections, s_trilinear_clamp_sampler, i.texcoord);
+                
                     
                 //computes the pixel coordinate required by the samplers
                 float4 color = float4(SAMPLE_TEXTURE2D_X_LOD(_ColorPyramidTexture, s_trilinear_clamp_sampler, i.texcoord, 0).rgb, 1.0f);
                 
                
-                return color * float4((float3)(shadow), 1.0f) * float4(reflection, 1.0f);
+                return color * float4((float3)(shadow), 1.0f) * float4(reflections, 1.0f);
                 //return float4((float3)(shadow), 1.0f);
                 //return float4(reflection, 1.0f);
             }

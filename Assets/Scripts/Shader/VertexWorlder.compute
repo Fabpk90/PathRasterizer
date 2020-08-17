@@ -1,24 +1,44 @@
 ﻿// Each #kernel tells which function to compile; you can have many kernels
 #pragma kernel CSMain
 
-struct Mesh 
-{
-   float4x4 localToWorld;
-   int eboOffset;
-   int eboCount;
-   float4 color;
-};
 
-// Create a RenderTexture with enableRandomWrite flag and set it
-// with cs.SetTexture
 StructuredBuffer<float3> meshVertices;
 
 RWStructuredBuffer<float3> output;
+StructuredBuffer<float2> meshes;
 
-float4x4 localToWorldMatrix;//needs to be a buffer to work, each mesh has a different matrix dumb dumb
-
-[numthreads(1024,1,1)]
+[numthreads(64,1,1)]
 void CSMain (uint3 id : SV_DispatchThreadID)
 {
+  /* uint stride, verticesCount, meshesCount;
+   meshVertices.GetDimensions(verticesCount, stride);
+   meshes.GetDimensions(meshesCount, stride);
+
+   uint count = verticesCount / 64;
+   uint start = id.x * count;
+   uint stop = (id.x + 1) * count;
+
+   uint meshIndex = 0;
+
+   //change mesh
+   while(m.eboOffset + m.eboCount < start)
+   {
+      if(meshIndex == meshesCount)
+         return;
+      m = meshes[++meshIndex];   
+   }
    
+   for (uint i = start; i < stop && i < verticesCount; ++i)
+   {
+      float4 vertex = float4(meshVertices[i], 1.0f);
+      vertex = mul(m.localToWorld, vertex);
+
+      output[i] = vertex;
+
+      //change mesh
+      while(m.eboOffset + m.eboCount < i)
+      {
+         m = meshes[++meshIndex];   
+      }
+   }*/
 }

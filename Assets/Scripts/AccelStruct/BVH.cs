@@ -36,10 +36,10 @@ public class BVHNode
     }
 }
 
-//TODO: fix this, char is not recognized by the compute buffer so no cache friendliness for now
 public struct LBVH
 {
-    public Bounds bounds; // 64bits
+    public Vector3 min;
+    public Vector3 max;
     public int offset; //could be second child offset or primitive index // 96
     public int primAndAxis; // -> node 
     //public ushort padding; //ensures that struct is cache friendly (fits in a line) //128 bits
@@ -115,7 +115,7 @@ public class BVH
         FlattenTree(root, ref offset);
     }
 
-    public (bool, float) RayIntersection(Ray r)
+   /* public (bool, float) RayIntersection(Ray r)
     {
         Vector3 invDir = new Vector3(1 / r.direction.x, 1 / r.direction.y, 1 / r.direction.z);
         int[] stackNodes = new int[64];
@@ -159,7 +159,7 @@ public class BVH
                 currentNodeIndex = stackNodes[--toVisitOffset];
             }
         }
-    }
+    }*/
     
     private bool rayBoxIntersection(Bounds b, Ray r)
     {
@@ -203,7 +203,7 @@ public class BVH
         //we create a node, we can't divide anymore
         if (primitives == 1)
         {
-            Debug.Log("Creating a node cause 1 primitive remains");
+//            Debug.Log("Creating a node cause 1 primitive remains");
             int primitivesOffset = orderedInfos.Count;
             
             int primitiveNumber = primitivesInfo[start].primitiveIndex;
@@ -244,9 +244,9 @@ public class BVH
                     //using equally sized subsets as it's cheaper
                     //just swap the 2 primitives
                     // if a.centroid[dim] < b.centroid[dim]
-                    Debug.Log(start);
-                    Debug.Log(end);
-                    Debug.Log(mid);
+//                    Debug.Log(start);
+//                    Debug.Log(end);
+//                    Debug.Log(mid);
                     var prim0 = primitivesInfo[start];
                     var prim1 = primitivesInfo[start + 1];
 
@@ -381,7 +381,8 @@ public class BVH
     private int FlattenTree(BVHNode node, ref int offset)
     {
         LBVH linearNode = new LBVH();
-        linearNode.bounds = node.boundingBox;
+        linearNode.min = node.boundingBox.min;
+        linearNode.max = node.boundingBox.max;
         int myOffset = offset++;
 
         if (node.children == null)

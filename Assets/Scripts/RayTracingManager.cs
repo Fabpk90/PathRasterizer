@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using UnityEngine;
 using UnityEngine.Experimental.GlobalIllumination;
 using UnityEngine.Experimental.Rendering;
@@ -57,6 +58,7 @@ namespace UnityTemplateProjects
         public ComputeShader shaderRT;
         public RenderTexture tex;
         public RenderTexture cumulationTex;
+        public RenderTexture reflectionTexture;
         private ComputeBuffer buffer;
         public Texture skybox;
         
@@ -169,9 +171,11 @@ namespace UnityTemplateProjects
             //tex.format = RenderTextureFormat.RGB111110Float;
             tex.Create();
             
-            cumulationTex = new RenderTexture(Screen.width, Screen.height, 0) {enableRandomWrite = true};
-            cumulationTex.format = tex.format;
+            cumulationTex = new RenderTexture(Screen.width / 4, Screen.height / 4, 0) {enableRandomWrite = true};
             cumulationTex.Create();
+            
+            reflectionTexture = new RenderTexture(Screen.width / 4, Screen.height / 4, 0) { enableRandomWrite = true};
+            reflectionTexture.Create();
             
             
             tex0 = new RenderTexture(Screen.width, Screen.height, 0);
@@ -208,7 +212,7 @@ namespace UnityTemplateProjects
                 shaderRT.SetTexture(kernel, "skybox", skybox);
             }
            
-            
+            shaderRT.SetTexture(1, "texOut", reflectionTexture);
 
             shaderRT.SetMatrix("cameraToWorld", _cam.cameraToWorldMatrix);
             shaderRT.SetMatrix("cameraInvProj", _cam.projectionMatrix.inverse);
@@ -218,36 +222,28 @@ namespace UnityTemplateProjects
             
             shaderRT.SetVector("cameraPlanes", new Vector4(_cam.nearClipPlane, _cam.farClipPlane));
             
-            
+            Mixer.SetTexture("_TracedShadows", tex);
+            Mixer.SetTexture("_TracedReflections", cumulationTex);
             
 //            shaderRT.Dispatch(kernelIndex, tex.width / 8, tex.height / 8, 1);
 
             RenderPipelineManager.endCameraRendering += RenderPipelineManagerOnendCameraRendering;
-
-            float depth = Mathf.Abs(0.0923f - 1) * 2.0f - 1.0f;
-            
-            Vector4 uv = new Vector4(0, 0, depth, 1.0f);
-            Vector4 viewPos = _cam.projectionMatrix.inverse * uv;
-            viewPos /= viewPos.w;
-
-            Vector3 worldPos = _cam.cameraToWorldMatrix.inverse * viewPos;
-
         }
 
         private void RenderPipelineManagerOnendCameraRendering(ScriptableRenderContext arg1, Camera arg2)
         {
             if (arg2.name != "Main Camera") return;
             
-            // if (_sampleRate < 500) //stacking frames for TAA
+             if (_sampleRate < 500) //stacking frames for TAA
             {
-                buffer.SetData(spheres);
-                shaderRT.SetMatrix("cameraToWorld", _cam.cameraToWorldMatrix);
-                shaderRT.SetMatrix("cameraInvProj", _cam.projectionMatrix.inverse);
+               // buffer.SetData(spheres);
+               
                 shaderRT.SetFloats("pixelOffset", Random.value, Random.value);
                 shaderRT.SetFloat("seed", Random.value);
 
-                shaderRT.Dispatch(0, tex.width / 8, tex.height / 8, 1);
-                shaderRT.Dispatch(1, tex.width / 8, tex.height / 8, 1);
+                //shaderRT.Dispatch(0, tex.width / 16, tex.height / 16, 1);
+
+                //shaderRT.Dispatch(1, tex.width / 16, tex.height / 16, 1);
                 
             
                 AA.SetFloat(Sample, _sampleRate);
@@ -255,9 +251,14 @@ namespace UnityTemplateProjects
             }
             //Graphics.Blit(tex, cumulationTex, AA);
 
-            Mixer.SetTexture(PathTracedShadowsReflections, tex);
-            
+            shaderRT.SetMatrix("cameraToWorld", _cam.cameraToWorldMatrix);
+            shaderRT.SetMatrix("cameraInvProj", _cam.projectionMatrix.inverse);
+
             CommandBuffer cmd = new CommandBuffer();
+            cmd.name = "Hybrid Renderer";
+            cmd.DispatchCompute(shaderRT, 0, tex.width / 16, tex.height / 16, 1);
+            cmd.DispatchCompute(shaderRT, 1, reflectionTexture.width / 8, reflectionTexture.height / 8, 1);
+            cmd.Blit(reflectionTexture, cumulationTex, AA);
             cmd.Blit(tex, arg2.activeTexture, Mixer);
             arg1.ExecuteCommandBuffer(cmd);
             cmd.Release();
@@ -273,6 +274,7 @@ namespace UnityTemplateProjects
             List<int> ebos = new List<int>();
             List<ShaderMesh> meshObjects = new List<ShaderMesh>(Subscribers.Count);
             List<MeshRenderer> renderers = new List<MeshRenderer>(Subscribers.Count);
+            List<Vector2Int> meshesVertexOffsets = new List<Vector2Int>(Subscribers.Count);
 
             for (int i = 0; i < Subscribers.Count; i++)
             {
@@ -294,32 +296,64 @@ namespace UnityTemplateProjects
                 ebos.AddRange(indices.Select(index => index + vertices.Count));
                 m.eboCount = ebos.Count;
                 
+                Vector2Int meshVertexOffset = Vector2Int.zero;
+                meshVertexOffset.x = vertices.Count;
                 vertices.AddRange(mesh.vertices);
+                meshVertexOffset.y = vertices.Count;
+                
+                meshesVertexOffsets.Add(meshVertexOffset);
 
                 meshObjects.Add(m);
             }
 
-            bufferMeshVertices = new ComputeBuffer(vertices.Count, sizeof(float) * 3);
-            bufferMeshVertices.SetData(vertices);
-            
             bufferMeshEbo = new ComputeBuffer(ebos.Count, sizeof(int));
             bufferMeshEbo.SetData(ebos);
 
-            //shaderVertexWorlder.SetBuffer(0, "meshVertices", bufferMeshVertices);
-
-            //ComputeBuffer bufferVertexWorld = new ComputeBuffer(vertices.Count, sizeof(float) * 3);
-            
-            //shaderVertexWorlder.SetBuffer(0, "output", bufferVertexWorld);
-
-            //shaderVertexWorlder.Dispatch(0, bufferMeshEbo.count / 1024, 1, 1);
-            //bufferMeshVertices.Release();
-            //bufferMeshVertices = bufferVertexWorld;
+            print(vertices.Count);
             
 
             bufferMeshes = new ComputeBuffer(meshObjects.Count, sizeof(float) * 16 + 2 * sizeof(int) + 4 * sizeof(float));
             bufferMeshes.SetData(meshObjects);
 
-            bvh.BuildBVH(renderers.ToArray());
+            //TODO: try to launch a thread that updates the bvh, concurrently dispatch the cs, join the thread after that
+            //TODO: update bvh, update meshes vertices infos
+            Bounds[] bounds = new Bounds[renderers.Count];
+            Matrix4x4[] localToWorlds = new Matrix4x4[renderers.Count];
+            for (int i = 0; i < renderers.Count; i++)
+            {
+                bounds[i] = renderers[i].bounds;
+                localToWorlds[i] = renderers[i].transform.localToWorldMatrix;
+            }
+            
+            Thread thread = new Thread(o =>
+            {
+                bvh.bvh = new BVH(bounds, localToWorlds);
+            });
+            thread.Start();
+            
+            //TODO: make this a compute shader
+            Thread th = new Thread(o =>
+            {
+                for (int i = 0; i < meshObjects.Count; i++)
+                {
+                    Vector2Int m = meshesVertexOffsets[i];
+                    Matrix4x4 localToWorld = meshObjects[i].localToWorld;
+                    for (int j = m.x ; j < m.y; j++)
+                    {
+                        Vector4 v = vertices[j];
+                        v.w = 1.0f;
+
+                        vertices[j] = localToWorld * v;
+                    }
+                }
+            });
+            th.Start();
+            
+            thread.Join();
+            th.Join();
+            
+            bufferMeshVertices = new ComputeBuffer(vertices.Count, sizeof(float) * 3);
+            bufferMeshVertices.SetData(vertices);
             
             BVHBuffer = new ComputeBuffer(bvh.bvh.flatTree.Length, sizeof(float) * 6 + sizeof(int) * 2);
             BVHBuffer.SetData(bvh.bvh.flatTree);

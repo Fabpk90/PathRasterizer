@@ -33,14 +33,14 @@ public class CameraRayController : MonoBehaviour
         {
             r = Camera.main.ScreenPointToRay(Input.mousePosition);
             Stopwatch s = Stopwatch.StartNew();
-            var res = bvh.bvh.RayIntersection(r);
+           /* var res = bvh.bvh.RayIntersection(r);
             s.Stop();
 
             if (res.Item1)
             {
                 print("yes");
                 distance = res.Item2;
-            }
+            }*/
         }
         Debug.DrawLine(r.origin, r.origin + r.direction * 50.0f, Color.red);
 

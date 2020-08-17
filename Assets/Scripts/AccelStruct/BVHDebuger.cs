@@ -10,20 +10,6 @@ public class BVHDebuger : MonoBehaviour
     public BVH bvh; 
     // Start is called before the first frame update
 
-    public void BuildBVH(MeshRenderer[] renderers)
-    {
-        Bounds[] bounds = new Bounds[renderers.Length];
-        Matrix4x4[] localToWorlds = new Matrix4x4[renderers.Length];
-        for (int i = 0; i < renderers.Length; i++)
-        {
-            bounds[i] = renderers[i].bounds;
-            localToWorlds[i] = renderers[i].transform.localToWorldMatrix;
-        }
-
-        bvh = new BVH(bounds, localToWorlds);
-        print(bvh.nodeCreated);
-    }
-
     private void OnDrawGizmos()
     {
         if (bvh != null)
@@ -37,7 +23,7 @@ public class BVHDebuger : MonoBehaviour
         for (int i = 0; i < bvhFlatTree.Length; i++)
         {
             //if((bvhFlatTree[i].primAndAxis & 4294901760) > 0)
-                Gizmos.DrawWireCube(bvhFlatTree[i].bounds.center, bvhFlatTree[i].bounds.size);
+                //Gizmos.DrawWireCube(bvhFlatTree[i].bounds.center, bvhFlatTree[i].bounds.size);
         }
     }
 
