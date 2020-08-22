@@ -50,7 +50,7 @@ public class CameraRayController : MonoBehaviour
     {
         if (distance > 0)
         {
-            Gizmos.DrawWireSphere(r.GetPoint(distance), 1f);
+           // Gizmos.DrawWireSphere(r.GetPoint(distance), 1f);
         }
     }
 }

@@ -22,8 +22,8 @@ public class BVHDebuger : MonoBehaviour
     {
         for (int i = 0; i < bvhFlatTree.Length; i++)
         {
-            //if((bvhFlatTree[i].primAndAxis & 4294901760) > 0)
-                Gizmos.DrawWireCube((bvhFlatTree[i].min + bvhFlatTree[i].max) / 2, (bvhFlatTree[i].min - bvhFlatTree[i].max));
+            Gizmos.color = (bvhFlatTree[i].primAndAxis & 4294901760) > 0 ? Color.red : Color.white;
+            Gizmos.DrawWireCube((bvhFlatTree[i].min + bvhFlatTree[i].max) / 2, (bvhFlatTree[i].min - bvhFlatTree[i].max));
         }
     }
 
