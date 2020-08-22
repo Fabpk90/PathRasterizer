@@ -87,14 +87,17 @@
      <Compile Include="Assets\Tayx\Graphy - Ultimate Stats Monitor\Scripts\Util\G_Intstring.cs" />
      <Compile Include="Assets\Tayx\Graphy - Ultimate Stats Monitor\Scripts\Util\G_Singleton.cs" />
      <Compile Include="Assets\TutorialInfo\Scripts\Readme.cs" />
+     <None Include="Assets\Scripts\Shader\tracingUtils.hlsl" />
      <None Include="Assets\Scripts\Shader\RT.compute" />
      <None Include="Assets\Scripts\Shader\AART.shader" />
      <None Include="Assets\Tayx\Graphy - Ultimate Stats Monitor\Changelog.txt" />
+     <None Include="Assets\Scripts\Shader\reflections.compute" />
      <None Include="Assets\Tayx\Graphy - Ultimate Stats Monitor\Shaders\GraphMobile.shader" />
      <None Include="Assets\Scripts\Shader\Mixer.shader" />
      <None Include="Assets\Tayx\Graphy - Ultimate Stats Monitor\Font\Northwest-Bold\ERIC-TIRADO-NORTHWEST-LICENSE.txt" />
      <None Include="Assets\Tayx\Graphy - Ultimate Stats Monitor\Font\Roboto\LICENSE.txt" />
      <None Include="Assets\Tayx\Graphy - Ultimate Stats Monitor\Shaders\GraphStandard.shader" />
+     <None Include="Assets\Scripts\Shader\raySorter.compute" />
      <None Include="Assets\Scripts\Shader\VertexWorlder.compute" />
  <Reference Include="Unity.Timeline.Editor">
  <HintPath>F:/UnityProject/PathRasterizer/Library/ScriptAssemblies/Unity.Timeline.Editor.dll</HintPath>

@@ -1,0 +1,70 @@
+#pragma enable_d3d11_debug_symbols
+#pragma kernel SortingPass
+
+#include "tracingUtils.hlsl"
+
+#include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Common.hlsl"
+//#include "Library/PackageCache/com.unity.render-pipelines.core@7.4.3/ShaderLibrary/Random.hlsl"
+//#include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Packing.hlsl"
+#include "Packages/com.unity.render-pipelines.high-definition/Runtime/ShaderLibrary/ShaderVariables.hlsl"
+//#include "Packages/com.unity.render-pipelines.high-definition/Runtime/Material/Builtin/BuiltinData.hlsl"
+
+#include "Packages/com.unity.render-pipelines.high-definition/Runtime/Material/NormalBuffer.hlsl"
+
+AppendStructuredBuffer<Ray> rays;
+RWTexture2D<float3> texOut;
+
+//random displacement
+float2 pixelOffset;
+
+
+float4x4 cameraToWorld;
+float4x4 cameraInvProj;
+
+[numthreads(8, 8, 1)]
+void SortingPass(uint3 id : SV_DispatchThreadID)
+{
+    float2 uv = (id.xy + pixelOffset) / (_ScreenSize.xy / 4);
+     
+    float depth = SampleCameraDepth(uv);
+    float linearDepth = Linear01Depth(depth, _ZBufferParams);
+
+    //sky here, depth is [1, 0]
+    if(linearDepth == 1.0f)
+    {
+        texOut[id.xy] = (float4)1.0f;
+        return;
+    }
+
+    uint2 positionSS = uv * _ScreenSize.xy;
+    
+    NormalData normalData;
+    DecodeFromNormalBuffer(positionSS, normalData);
+    // N = normalData.normalWS;
+    // roughness = normalData.perceptualRoughness;
+     
+    //mapping to [-1, 1] clip space;
+    depth = abs(depth - 1.0f) * 2.0f - 1.0f;
+
+    float2 uvClip = uv * 2.0f - 1.0f;
+     
+    float4 cs = float4(uvClip, depth, 1.0f);
+    float4 viewPos = mul(cameraInvProj, cs);
+     
+    //perspective division
+    viewPos /= viewPos.w; 
+     
+    float3 worldPos = mul(cameraToWorld, viewPos);
+     
+    Ray r;
+     
+    float3 direction = (reflect(normalize(worldPos - _WorldSpaceCameraPos), normalData.normalWS));
+    //float3 direction = N;
+     
+    r.a = worldPos;
+    r.direction = direction;
+    r.invDir = normalize(1 / direction);
+    r.energy = (float3)1;//change this according to the material
+
+    rays.Append(r);
+}    

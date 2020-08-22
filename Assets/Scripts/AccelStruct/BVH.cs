@@ -395,11 +395,7 @@ public class BVH
         if (node.children == null)
         {
             int primitives = node.meshCount << 16;
-            if (node.meshCount > 1)
-            {
-                Debug.Log("fuck" + node.meshCount);
-            }
-            int n = (int) (primitives >> 16);
+//            int n = (int) (primitives >> 16);
             linearNode.primAndAxis = primitives;
             linearNode.offset = node.meshIndexStart;
             

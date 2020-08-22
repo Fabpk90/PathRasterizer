@@ -2,68 +2,18 @@
 #pragma enable_d3d11_debug_symbols
 //#pragma kernel CSMain
 #pragma kernel ShadowPass
-#pragma kernel ReflectionPass
+//#pragma kernel ReflectionPass
 //#pragma kernel AOPass
 
 #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Common.hlsl"
+//#include "Library/PackageCache/com.unity.render-pipelines.core@7.4.3/ShaderLibrary/Random.hlsl"
 //#include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Packing.hlsl"
 #include "Packages/com.unity.render-pipelines.high-definition/Runtime/ShaderLibrary/ShaderVariables.hlsl"
 //#include "Packages/com.unity.render-pipelines.high-definition/Runtime/Material/Builtin/BuiltinData.hlsl"
 
 #include "Packages/com.unity.render-pipelines.high-definition/Runtime/Material/NormalBuffer.hlsl"
 
-struct Sphere
-{
-    float3 position;
-    float radius;
-    float3 color;
-    float3 specular;
-    float3 emission;
-    float smoothness;
-};
-
-struct Ray
-{
-    float3 a;
-    float3 direction;
-    float3 invDir;
-    float3 energy; //to be multiplied by the color touched
-};
-
-struct RayHit
-{
-    float3 color;
-    float3 specular;
-    float3 normal;
-    float3 emission;
-    float smoothness;
-    
-    float alpha;
-    float3 position;
-};
-
-struct Mesh 
-{
-    float4x4 localToWorld;
-    int eboOffset;
-    int eboCount;
-    float4 color;
-};
-
-struct MeshBoundingBox
-{
-    int indexMesh;
-    float3 max;
-    float3 min;
-};
-
-struct LBVH
-{
-    float3 minBox;
-    float3 maxBox;
-    int offset; //could be second child offset or primitive index // 96
-    int primAndAxis; // LMB -> node  RMB -> axis
-};
+#include "tracingUtils.hlsl"
 
 RWTexture2D<float4> texOut;
 
@@ -81,68 +31,11 @@ StructuredBuffer<LBVH> bvhTree;
 
 float4x4 cameraToWorld;
 float4x4 cameraInvProj;
-float2 cameraPlanes;
 
 //random displacement
 float2 pixelOffset;
 
 float2 _pixel;
-float seed;
-
-static const float EPSILON = 1e-8;
-
-uint eboCount, spheresCount, meshCount;
-
-//used to convert [0, 1] value to a correct range for phong rendering
-//to be used as it is in the standard shader
-float SmoothnessToPhongAlpha(float s)
-{
-    return pow(1000.0f, s * s);
-}
-
-float linearizeDepth(float depth)
-{
-    float nearPlane = cameraPlanes.x;
-    float farPlane = cameraPlanes.y;
-    return (2 * nearPlane) / (farPlane + nearPlane - depth * (farPlane - nearPlane));
-}
-
-//https://tavianator.com/fast-branchless-raybounding-box-intersections-part-2-nans/
-bool rayBoxIntersection(float3 minBox, float3 maxBox, Ray r)
-{
-    float t1 = (minBox[0] - r.a[0]) * r.invDir[0];
-    float t2 = (maxBox[0] - r.a[0]) * r.invDir[0];
-
-    float tmin = min(t1, t2);
-    float tmax = max(t1, t2);
- 
-    for (int i = 1; i < 3; ++i) 
-    {
-        t1 = (minBox[i] - r.a[i]) * r.invDir[i];
-        t2 = (maxBox[i] - r.a[i]) * r.invDir[i];
- 
-        tmin = max(tmin, min(t1, t2));
-        tmax = min(tmax, max(t1, t2));
-        
-        //tmin = max(tmin, min(min(t1, t2), tmax));
-        //tmax = min(tmax, max(max(t1, t2), tmin));
-     
-    }
-
-    return tmax >= max(tmin, 0.0);// || tmax < 0.0;
-}
-
-float3 getPointAt(Ray r, float alpha)
-{
-   return r.a + (r.direction * alpha);
-}
-// https://stackoverflow.com/questions/12964279/whats-the-origin-of-this-glsl-rand-one-liner
-float rand()
-{
-    float result = frac(sin(seed / 100.0f * dot(_pixel, float2(12.9898f, 78.233f))) * 43758.5453f);
-    seed += 1.0f;
-    return result;
-}
 
 Ray CreateCameraRay(float2 uv)
 {
@@ -164,138 +57,6 @@ Ray CreateCameraRay(float2 uv)
     return r;
 }
 
-bool sphereIntersection(Ray r, inout RayHit hit, Sphere sphere, float tMin, float tMax)
-{
-    float3 AC = r.a - sphere.position;
-    float c = dot(AC, AC) - sphere.radius * sphere.radius;
-    float a = dot(r.direction, r.direction);
-    float b = dot(r.direction, AC);
-
-    float discriminant = b*b - a * c; // aka delta
-
-    float tempAlpha;
-
-    if(discriminant > 0)
-    {
-        float root = sqrt(discriminant);
-        tempAlpha = (-b - root) / a;
-
-        if(tMin < tempAlpha && tMax > tempAlpha)
-        {
-            float3 surfaceHit = getPointAt(r, tempAlpha);
-            float3 normal = (surfaceHit - sphere.position) / sphere.radius;
-            
-            hit.position = surfaceHit;
-            hit.normal =  normal;
-            
-            hit.color = sphere.color;
-            hit.alpha = tempAlpha;
-            hit.specular = sphere.specular;
-            hit.smoothness = sphere.smoothness;
-            hit.emission = sphere.emission;
-            return true;
-        }
-
-        tempAlpha = (-b + root) / a;
-
-        if(tMin < tempAlpha && tMax > tempAlpha)
-        {
-            float3 surfaceHit = getPointAt(r, tempAlpha);
-            float3 normal = (surfaceHit - sphere.position) / sphere.radius;
-            
-            hit.position = surfaceHit;
-            hit.normal =  normal;
-            
-            hit.color = sphere.color;
-            hit.alpha = tempAlpha;
-            hit.specular = sphere.specular;
-            hit.smoothness = sphere.smoothness;
-            hit.emission = sphere.emission;
-            return true;
-        }
-    }
-    
-    return false;
-}
-
-
-// http://fileadmin.cs.lth.se/cs/Personal/Tomas_Akenine-Moller/pubs/raytri_tam.pdf
-//returns true if hits a triangle, filling t with the distance and u and v with barycentric [0] [1]  [2] = 1 - u - v
-bool TriangleIntersection(Ray r, inout RayHit hit, float3 a, float3 b, float3 c)
-{
-    float t, u, v;
-    float3 edge1 = b - a;
-    float3 edge2 = c - a;
-    
-    float3 pVec = cross(r.direction, edge2);
-    float det = dot(pVec, edge1);
-    
-    
-    //back-face culling
-    if(det < EPSILON)
-        return false;
-        
-    float invDet = 1.0f / det;
-    
-    float3 tVec = r.a - a;
-    u = dot(tVec, pVec) * invDet;
-    
-    if(u < 0 || u > 1.0f)
-        return false;
-    
-    float3 qVec = cross(tVec, edge1);
-    v = dot(r.direction, qVec) * invDet;
-    
-    if(v < 0 || v + u > 1.0f)
-        return false;
-        
-    t = dot(edge2, qVec) * invDet;
-    
-    if(t < 0)
-        return false;
-    
-    hit.position = getPointAt(r, t);
-    hit.alpha = t;
-    hit.normal = normalize(cross(edge1, edge2));
-    hit.specular = 0.5f;
-    hit.smoothness = 1.0f;
-    hit.emission = 0.0f;
-    hit.color = 1.0f;
-    return true;
-}
-
-bool TriangleIntersectionHit(Ray r, float3 a, float3 b, float3 c)
-{
-    float t, u, v;
-    float3 edge1 = b - a;
-    float3 edge2 = c - a;
-    
-    float3 pVec = cross(r.direction, edge2);
-    float det = dot(pVec, edge1);
-    
-    //back-face culling
-    if(det < EPSILON)
-        return false;
-        
-    float invDet = 1.0f / det;
-    
-    float3 tVec = r.a - a;
-    u = dot(tVec, pVec) * invDet;
-    
-    if(u < 0 || u > 1.0f)
-        return false;
-    
-    float3 qVec = cross(tVec, edge1);
-    v = dot(r.direction, qVec) * invDet;
-    
-    if(v < 0 || v + u > 1.0f)
-        return false;
-        
-    t = dot(edge2, qVec) * invDet;
-    
-    return t > 0;
-}
-
 float3x3 GetTangentSpace(float3 normal)
 {
     // Choose a helper vector for the cross product
@@ -313,9 +74,9 @@ float3 SampleHemisphere(float3 normal, float alpha)
 {
     //https://blog.thomaspoulet.fr/uniform-sampling-on-unit-hemisphere/
     // Uniformly sample hemisphere direction
-    float cosTheta = pow(rand(), 1 / (1 + alpha));
+    float cosTheta = pow(rand(_pixel), 1 / (1 + alpha));
     float sinTheta = sqrt(1.0f - cosTheta * cosTheta);
-    float phi = 2 * PI * rand();
+    float phi = 2 * PI * rand(_pixel);
     
     float3 tangentSpaceDir = float3(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
     
@@ -352,19 +113,23 @@ bool TraverseTreeForHit(Ray r)
                 {
                     uint mesh = node.offset + ite;
                     int count = meshes[mesh].eboCount;
-                    float4 a,b,c;
+                    float3 a,b,c;
                     for(uint i = meshes[mesh].eboOffset; i < count; i+=3)
                     {
-                        a = float4(meshVertices[meshEbo[i]], 1);
-                        b = float4(meshVertices[meshEbo[i + 1]], 1);
-                        c = float4(meshVertices[meshEbo[i + 2]], 1);
-                    
+                        a = meshVertices[meshEbo[i]];
+                        b = meshVertices[meshEbo[i + 1]];
+                        c = meshVertices[meshEbo[i + 2]];
+
+                       // a = meshVertices[i];
+                       // b = (meshVertices[i + 1]);
+                       // c = (meshVertices[i + 2]);
+                        
                        //  a = mul(localToWorldMatrix, a);
                       //   b = mul(localToWorldMatrix, b);
                       //  c = mul(localToWorldMatrix, c);
 
                     
-                        if(TriangleIntersectionHit(r, (float3)a, (float3)b, (float3)c))
+                        if(TriangleIntersectionHit(r, a, b, c))
                             return true;
                         
                     }
@@ -398,97 +163,13 @@ bool TraverseTreeForHit(Ray r)
     return false;
 }
 
-void TraverseTree(Ray r, inout RayHit hit)
-{
-    int stackNodes[32];
-    
-    //This is useful to know which branch to choose 
-    // if the axis splits is neg in the ray then we take the right hand branch (second child)
-    // we can do this because we ordered the splitting during the construction
-    bool isDirNeg[] = {r.invDir.x < 0, r.invDir.y < 0, r.invDir.z < 0};
-
-    int toVisitOffset = 0, currentNodeIndex = 0;
-
-    while (true)
-    {
-        LBVH node = bvhTree[currentNodeIndex];
-
-        if (rayBoxIntersection(node.minBox, node.maxBox, r))
-        {
-            if ((node.primAndAxis >> 16)) //it's a leaf
-            {
-                //For now we have only one primitive in the leaf so we can simplify things
-                RayHit tmp = hit;
-                
-                //float4x4 localToWorldMatrix = meshes[node.offset].localToWorld;
-                int count = meshes[node.offset].eboCount;
-                for(int i = meshes[node.offset].eboOffset; i < count; i+=3)
-                {
-                    float4 a = float4(meshVertices[meshEbo[i]], 1);
-                    float4 b = float4(meshVertices[meshEbo[i + 1]], 1);
-                    float4 c = float4(meshVertices[meshEbo[i + 2]], 1); 
-                    
-                  //  a = mul(localToWorldMatrix, a);
-                 //   b = mul(localToWorldMatrix, b);
-                 //   c = mul(localToWorldMatrix, c);
-                    
-                    TriangleIntersection(r, tmp, (float3)a, (float3)b, (float3)c);
-                    
-                    if(hit.alpha > tmp.alpha)
-                    {
-                        hit = tmp;
-                        hit.color = meshes[node.offset].color;
-                    }
-                }
-                
-                if (toVisitOffset == 0) break;
-                currentNodeIndex = stackNodes[--toVisitOffset];
-            }
-            else
-            {
-                if (isDirNeg[node.primAndAxis & 3])
-                {
-                    stackNodes[toVisitOffset++] = currentNodeIndex + 1; //left hand child
-                    currentNodeIndex = node.offset;
-                }
-                else
-                {
-                    stackNodes[toVisitOffset++] = node.offset;
-                    currentNodeIndex = currentNodeIndex + 1;
-                }
-            }
-        }
-        else
-        {
-            if (toVisitOffset == 0) break;
-            currentNodeIndex = stackNodes[--toVisitOffset];
-        }
-    }
-}
-
-void Trace(Ray r, inout RayHit hit)
-{
-    for(uint k = 0; k < spheresCount; ++k)
-    {
-        RayHit tmp = hit;
-        sphereIntersection(r, hit, spheres[k], cameraPlanes.x, cameraPlanes.y);
-        
-        if(hit.alpha > tmp.alpha)
-            hit = tmp;
-    }
-    
-    //Traverse the bvhTree
-    // find the nearest hit if any
-    
-    TraverseTree(r, hit);
-}
 
 bool Trace(Ray r)
 {
     RayHit hit;
-    for(uint k = 0; k < spheresCount; ++k)
+    for(uint k = 0; k < 1; ++k)
     {
-        if(sphereIntersection(r, hit, spheres[k], cameraPlanes.x, cameraPlanes.y))
+        if(sphereIntersection(r, hit, spheres[k], _ProjectionParams.y, _ProjectionParams.z))
             return true;
     }
 
@@ -497,7 +178,7 @@ bool Trace(Ray r)
 
 float3 Shade(inout Ray r, RayHit hit)
 {
-    if(hit.alpha > cameraPlanes.y) //we've hit nothing
+    if(hit.alpha > _ProjectionParams.z) //we've hit nothing
     {
         //switching to spherical coordinates to sample the skybox
         float theta = acos(r.direction.y) / -PI;
@@ -520,7 +201,7 @@ float3 Shade(inout Ray r, RayHit hit)
         specChance /= sum;
         diffChance /= sum;
         
-        float random = rand();
+        float random = rand(_pixel);
         
         r.a = hit.position + hit.normal + 0.001f; //just a bit off the surface, +.001f for ieee inaccuracy
         
@@ -546,13 +227,13 @@ float3 Shade(inout Ray r, RayHit hit)
 
 
 //This is used to compute shadows
-[numthreads(16, 16, 1)]
+[numthreads(8, 8, 1)]
 void ShadowPass(uint3 id : SV_DispatchThreadID)
 {
     uint texSizeX, texSizeY;
     texOut.GetDimensions(texSizeX, texSizeY);
 
-    float2 uv = id.xy / float2(texSizeX, texSizeY);
+    float2 uv = (id.xy) / float2(texSizeX, texSizeY);
     
     float2 uvClip = uv * 2.0f - 1.0f;
     uint2 positionSS = uv * _ScreenSize.xy;
@@ -567,12 +248,6 @@ void ShadowPass(uint3 id : SV_DispatchThreadID)
         return;
     }
     
-    uint stride;
-    spheres.GetDimensions(spheresCount, stride);
-
-    meshEbo.GetDimensions(eboCount, stride);
-    meshes.GetDimensions(meshCount, stride);
-    
     //mapping to [-1, 1] clip space;
     depth = abs(depth - 1.0f) * 2.0f - 1.0f;
     
@@ -582,10 +257,10 @@ void ShadowPass(uint3 id : SV_DispatchThreadID)
     //perspective division
     viewPos /= viewPos.w; 
     
-    float4 worldPos = mul(cameraToWorld, viewPos);
+    float3 worldPos = mul(cameraToWorld, viewPos);
     
     RayHit hit;
-    hit.alpha = cameraPlanes.y + 1;
+    hit.alpha = _ProjectionParams.z + 1;
     
     NormalData normalData;
     DecodeFromNormalBuffer(positionSS, normalData);
@@ -606,94 +281,14 @@ void ShadowPass(uint3 id : SV_DispatchThreadID)
     texOut[id.xy] = float4(!hitSomething, 0.0f, 0.0f, 0.0f);
 }
 
-[numthreads(8, 8, 1)]
-void ReflectionPass(uint3 id : SV_DispatchThreadID)
-{
-      //if(id.x & 1) return;
-     //TODO: compute the origin of the ray (depth texture + black magic transformation)
-    // get the direction from the normal buffer
-    // maybe compute the energy of the first hit
-    
-     uint texSizeX, texSizeY;
-    texOut.GetDimensions(texSizeX, texSizeY);
 
-    float2 uv = (id.xy /*+ pixelOffset*/) / float2(texSizeX, texSizeY);
-    
-    float2 uvClip = uv * 2.0f - 1.0f;
-    uint2 positionSS = uv * _ScreenSize.xy;
-    
-    float depth = SampleCameraDepth(uv);
-    float linearDepth = Linear01Depth(depth, _ZBufferParams);
-    
- 
-    //sky here, depth is [1, 0]
-    if(linearDepth == 1.0f)
-    {
-        texOut[id.xy] = float4((float3)1, 1);
-        return;
-    }
-    
-    float3 N = (float3)0;  
-    NormalData normalData;
-    DecodeFromNormalBuffer(positionSS, normalData);
-    N = normalData.normalWS;
-    //roughness = normalData.perceptualRoughness;
-    
-    uint stride;
-    spheres.GetDimensions(spheresCount, stride);
-
-    meshEbo.GetDimensions(eboCount, stride);
-    meshes.GetDimensions(meshCount, stride);
-    
-    //mapping to [-1, 1] clip space;
-    depth = abs(depth - 1.0f) * 2.0f - 1.0f;
-    
-    float4 cs = float4(uvClip, depth, 1.0f);
-    float4 viewPos = mul(cameraInvProj, cs);
-    
-    //perspective division
-    viewPos /= viewPos.w; 
-    
-    float4 worldPos = mul(cameraToWorld, viewPos);
-   
-    RayHit hit;
-    hit.alpha = cameraPlanes.y + 1;
-    
-    Ray r;
-    
-    //float3 direction = (reflect(normalize(worldPos - _WorldSpaceCameraPos), N));
-    //float3 direction = N;
-    
-    r.a = worldPos;
-    r.direction = N;
-    r.invDir = 1 / N;
-    r.energy = (float3)1;//change this according to the material
-    
-    //We can optimize this by stopping at the first hit
-    //beware of alpha materials (leaf)
-    Trace(r, hit);
-    
-    if(hit.alpha > cameraPlanes.y && N.y > 0) //we've hit nothing
-    {
-        //switching to spherical coordinates to sample the skybox
-        float theta = acos(r.direction.y) / -PI;
-        float phi = atan2(r.direction.x, -r.direction.z) / -PI * 0.5f;
-
-        hit.color = skybox.SampleLevel(sampler_skybox, float2(phi, theta), 0);
-    }
-    
-    //TODO: blur the reflection
-    //packing shadows in x and reflections in y,z,w
-    texOut[id.xy] = float4(hit.color, 1.0f);
-}
-
-[numthreads(8, 8, 1)]
+[numthreads(16, 16, 1)]
 void AOPass(uint3 id : SV_DispatchThreadID)
 {
     uint texSizeX, texSizeY;
     texOut.GetDimensions(texSizeX, texSizeY);
 
-    float2 uv = id.xy / float2(texSizeX, texSizeY);
+    float2 uv = (id.xy) / float2(texSizeX, texSizeY);
     
     float2 uvClip = uv * 2.0f - 1.0f;
     uint2 positionSS = uv * _ScreenSize.xy;
@@ -702,16 +297,10 @@ void AOPass(uint3 id : SV_DispatchThreadID)
     float linearDepth = Linear01Depth(depth, _ZBufferParams);
     
     //sky here, depth is [1, 0]
-   /* if(linearDepth == 1.0f)
+    if(linearDepth == 1.0f)
     {
         return;
-    }*/
-    
-    uint stride;
-    spheres.GetDimensions(spheresCount, stride);
-
-    meshEbo.GetDimensions(eboCount, stride);
-    meshes.GetDimensions(meshCount, stride);
+    }
     
     //mapping to [-1, 1] clip space;
     depth = abs(depth - 1.0f) * 2.0f - 1.0f;
@@ -722,10 +311,10 @@ void AOPass(uint3 id : SV_DispatchThreadID)
     //perspective division
     viewPos /= viewPos.w; 
     
-    float4 worldPos = mul(cameraToWorld, viewPos);
+    float3 worldPos = mul(cameraToWorld, viewPos);
     
     RayHit hit;
-    hit.alpha = cameraPlanes.y + 1;
+    hit.alpha = _ProjectionParams.z + 1;
     
     NormalData normalData;
     DecodeFromNormalBuffer(positionSS, normalData);
@@ -734,20 +323,21 @@ void AOPass(uint3 id : SV_DispatchThreadID)
     Ray r;
     float result = 0.0f;
     
-    for(uint i = 0; i < 4; i++)
-    {}
+    for(uint i = 0; i < 1; i++)
+    {
+        r.a = worldPos + (N * 0.1f);//adding bias
+        r.direction = SampleHemisphere(N, SmoothnessToPhongAlpha(0.5f)); 
+        r.invDir = normalize(1 / N);
+        r.energy = (float3)1;
+
+        result += !Trace(r);
+    }
+
+    //result /= 2.0f;
     
-    r.a = worldPos + (N * 0.15f);//adding bias
-    r.direction = -directionalLight; 
-    //r.invDir = 1 / directionalLight;
-    r.energy = (float3)1;//change this according to the material
-    
-    //We can optimize this by stopping at the first hit
-    //beware of alpha materials (leaf)
-//    Trace(r, hit);
-    
+
     //packing shadows in x and reflections in y,z,w
-    texOut[id.xy] = float4((hit.alpha == cameraPlanes.y + 1), 0.0f, 0.0f, 0.0f);
+    //texOut[id.xy] = float4(0, 0.0f, 0.0f, 0.0f);
 }
 
 /*[numthreads(8,8,1)]

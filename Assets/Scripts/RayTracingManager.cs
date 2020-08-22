@@ -54,7 +54,11 @@ namespace UnityTemplateProjects
     
     public class RayTracingManager : MonoBehaviour
     {
-        public ComputeShader shaderVertexWorlder;
+        public ComputeShader shaderSorter;
+        public ComputeBuffer bufferRays;
+        private ComputeBuffer bufferRaysCount;
+        
+        public ComputeShader shaderReflections;
         public ComputeShader shaderRT;
         public RenderTexture tex;
         public RenderTexture cumulationTex;
@@ -192,11 +196,10 @@ namespace UnityTemplateProjects
             buffer.SetData(spheres);
 
             CreateMeshBuffers();
-            
 
             kernels.Add(shaderRT.FindKernel("ShadowPass"));
-            kernels.Add(shaderRT.FindKernel("ReflectionPass"));
-            //kernels.Add(shaderRT.FindKernel("AOPass"));
+            //kernels.Add(shaderRT.FindKernel("ReflectionPass"));
+           // kernels.Add(shaderRT.FindKernel("AOPass"));
             
 
             foreach (int kernel in kernels)
@@ -209,23 +212,57 @@ namespace UnityTemplateProjects
                 shaderRT.SetBuffer(kernel, "meshEbo", bufferMeshEbo);
                 shaderRT.SetBuffer(kernel, "bvhTree", BVHBuffer);
             
-                shaderRT.SetTexture(kernel, "skybox", skybox);
+                //shaderRT.SetTexture(kernel, "skybox", skybox);
             }
            
-            shaderRT.SetTexture(1, "texOut", reflectionTexture);
+            //shaderRT.SetTexture(1, "texOut", reflectionTexture);
+            
+            shaderReflections.SetTexture(0, "texOut", reflectionTexture);
+            shaderReflections.SetBuffer(0, "bvhTree", BVHBuffer);
+            shaderReflections.SetTexture(0, "skybox", skybox);
+
+            shaderReflections.SetBuffer(0, "meshes", bufferMeshes);
+            shaderReflections.SetBuffer(0, "meshVertices", bufferMeshVertices);
+            shaderReflections.SetBuffer(0, "meshEbo", bufferMeshEbo);
+            
+            shaderReflections.SetMatrix("worldToCamera", _cam.worldToCameraMatrix);
+            shaderReflections.SetMatrix("invProj", _cam.projectionMatrix.inverse);
 
             shaderRT.SetMatrix("cameraToWorld", _cam.cameraToWorldMatrix);
             shaderRT.SetMatrix("cameraInvProj", _cam.projectionMatrix.inverse);
+            
+
+            shaderSorter.SetTexture(0, "texOut", reflectionTexture);
+            shaderSorter.SetMatrix("cameraToWorld", _cam.cameraToWorldMatrix);
+            shaderSorter.SetMatrix("cameraInvProj", _cam.projectionMatrix.inverse);
+            
+
+            bufferRays = new ComputeBuffer(reflectionTexture.width * reflectionTexture.height, sizeof(float) * 12,
+                ComputeBufferType.Append);
+            bufferRays.SetCounterValue(0);
+            
+            bufferRaysCount = new ComputeBuffer(1, sizeof(int), ComputeBufferType.Raw);
+            
+            shaderSorter.SetBuffer(0, "rays", bufferRays);
+            shaderReflections.SetBuffer(0, "rays", bufferRays);
 
             var position = directionalLight.transform.forward;
             shaderRT.SetVector("directionalLight", new Vector4(position.x, position.y, position.z, directionalLight.intensity));
             
-            shaderRT.SetVector("cameraPlanes", new Vector4(_cam.nearClipPlane, _cam.farClipPlane));
+            //shaderRT.SetVector("cameraPlanes", new Vector4(_cam.nearClipPlane, _cam.farClipPlane));
             
             Mixer.SetTexture("_TracedShadows", tex);
             Mixer.SetTexture("_TracedReflections", cumulationTex);
             
 //            shaderRT.Dispatch(kernelIndex, tex.width / 8, tex.height / 8, 1);
+
+            Vector4 pos = new Vector4(24.93f, 2.12f, -15, 1.0f);
+            pos = _cam.worldToCameraMatrix * pos;
+
+            pos = _cam.projectionMatrix.inverse * pos;
+            
+            pos /= pos.w;
+            pos = (pos / 2.0f) + Vector4.one;
 
             RenderPipelineManager.endCameraRendering += RenderPipelineManagerOnendCameraRendering;
         }
@@ -234,18 +271,43 @@ namespace UnityTemplateProjects
         {
             if (arg2.name != "Main Camera") return;
             
-             if (_sampleRate < 500) //stacking frames for TAA
+            CommandBuffer cmd = new CommandBuffer();
+            cmd.name = "Hybrid Renderer";
+            
+            // if (_sampleRate < 100) //stacking frames for TAA
             {
                // buffer.SetData(spheres);
+
+               reflectionTexture.Release();
+               reflectionTexture.Create();
                
-                shaderRT.SetFloats("pixelOffset", Random.value, Random.value);
-                shaderRT.SetFloat("seed", Random.value);
+               shaderSorter.SetTexture(0, "texOut", reflectionTexture);
+               shaderReflections.SetTexture(0, "texOut", reflectionTexture);
 
-                //shaderRT.Dispatch(0, tex.width / 16, tex.height / 16, 1);
-
-                //shaderRT.Dispatch(1, tex.width / 16, tex.height / 16, 1);
+               shaderSorter.SetFloats("pixelOffset", Random.value, Random.value);
+                shaderSorter.SetFloat("seed", Random.value);
                 
-            
+                shaderReflections.SetMatrix("worldToCamera", _cam.worldToCameraMatrix);
+                shaderReflections.SetMatrix("invProj", _cam.projectionMatrix);
+                
+                shaderSorter.SetMatrix("cameraToWorld", _cam.cameraToWorldMatrix);
+                shaderSorter.SetMatrix("cameraInvProj", _cam.projectionMatrix.inverse);
+                
+                bufferRays.SetCounterValue(0);
+                
+                shaderSorter.Dispatch( 0,reflectionTexture.width / 8, reflectionTexture.height / 8, 1);
+
+                ComputeBuffer.CopyCount(bufferRays, bufferRaysCount, 0);
+                int[] a = new int[1];
+                
+                bufferRaysCount.GetData(a);
+                
+                if(a[0] > 64)
+                    shaderReflections.Dispatch(0, a[0] / 64, 1, 1);
+                
+                
+                cmd.Blit(reflectionTexture, cumulationTex, AA);
+
                 AA.SetFloat(Sample, _sampleRate);
                 _sampleRate++;
             }
@@ -253,12 +315,13 @@ namespace UnityTemplateProjects
 
             shaderRT.SetMatrix("cameraToWorld", _cam.cameraToWorldMatrix);
             shaderRT.SetMatrix("cameraInvProj", _cam.projectionMatrix.inverse);
+            
+            
 
-            CommandBuffer cmd = new CommandBuffer();
-            cmd.name = "Hybrid Renderer";
-            cmd.DispatchCompute(shaderRT, 0, tex.width / 16, tex.height / 16, 1);
-            cmd.DispatchCompute(shaderRT, 1, reflectionTexture.width / 8, reflectionTexture.height / 8, 1);
-            cmd.Blit(reflectionTexture, cumulationTex, AA);
+            
+            cmd.DispatchCompute(shaderRT, 0, tex.width / 8, tex.height / 8, 1);
+           // cmd.DispatchCompute(shaderReflections, 0, tex.width / 16, tex.height / 16, 1);
+           
             cmd.Blit(tex, arg2.activeTexture, Mixer);
             arg1.ExecuteCommandBuffer(cmd);
             cmd.Release();
@@ -283,8 +346,8 @@ namespace UnityTemplateProjects
                 renderers.Add(renderer);
             }
             
-            //TODO: try to launch a thread that updates the bvh, concurrently dispatch the cs, join the thread after that
-            //TODO: update bvh, update meshes vertices infos
+            //TODO: try to launch a thread that updates the bvh, concurrently dispatch the cs, join the thread after that update bvh,
+            //update meshes vertices infos
             Bounds[] bounds = new Bounds[renderers.Count];
             Matrix4x4[] localToWorlds = new Matrix4x4[renderers.Count];
             for (int i = 0; i < renderers.Count; i++)
@@ -297,13 +360,6 @@ namespace UnityTemplateProjects
             
             renderers.Clear();
 
-           /* Thread thread = new Thread(o =>
-            {
-               
-            });
-            thread.Start();
-            thread.Join();*/
-
             for (int i = 0; i < Subscribers.Count; i++)
             {
                 var meshObject = Subscribers[i].gameObject;
@@ -312,24 +368,24 @@ namespace UnityTemplateProjects
                 
 //                print(renderer.transform);
                 renderers.Add(renderer);
-
-                //TODO: sort the meshes for the bvh, if we want to include more than a primitive (mesh) in a node
+                
                 ShaderMesh m;
                 m.eboOffset = ebos.Count;
                 m.localToWorld = meshObject.transform.localToWorldMatrix;
                 var c = renderer.material.color;
                 m.color = c;
-
+                
                 var indices = mesh.GetIndices(0);
+
                 ebos.AddRange(indices.Select(index => index + vertices.Count));
                 m.eboCount = ebos.Count;
                 
-                Vector2Int meshVertexOffset = Vector2Int.zero;
-                meshVertexOffset.x = vertices.Count;
+                Vector2Int offsets = Vector2Int.zero;
+                offsets.x = vertices.Count;
                 vertices.AddRange(mesh.vertices);
-                meshVertexOffset.y = vertices.Count;
+                offsets.y = vertices.Count;
                 
-                meshesVertexOffsets.Add(meshVertexOffset);
+                meshesVertexOffsets.Add(offsets);
 
                 meshObjects.Add(m);
             }
@@ -342,9 +398,8 @@ namespace UnityTemplateProjects
 
             bufferMeshes = new ComputeBuffer(meshObjects.Count, sizeof(float) * 16 + 2 * sizeof(int) + 4 * sizeof(float));
             bufferMeshes.SetData(meshObjects);
-
             
-           for (int i = 0; i < meshObjects.Count; i++)
+            for (int i = 0; i < meshObjects.Count; i++)
             {
                 Vector2Int m = meshesVertexOffsets[i];
                 Matrix4x4 localToWorld = meshObjects[i].localToWorld;
@@ -445,6 +500,8 @@ namespace UnityTemplateProjects
             bufferMeshEbo.Release();
             bufferMeshVertices.Release();
             BVHBuffer.Release();
+            bufferRays.Release();
+            bufferRaysCount.Release();
         }
     }
 }
