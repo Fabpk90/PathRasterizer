@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
+using TMPro;
 using UnityEngine;
 using UnityEngine.Experimental.GlobalIllumination;
 using UnityEngine.Experimental.Rendering;
@@ -55,7 +56,7 @@ namespace UnityTemplateProjects
     public class RayTracingManager : MonoBehaviour
     {
         public ComputeShader shaderSorter;
-        public ComputeBuffer bufferRays;
+        private ComputeBuffer bufferRays;
         private ComputeBuffer bufferRaysCount;
         
         public ComputeShader shaderReflections;
@@ -95,6 +96,9 @@ namespace UnityTemplateProjects
 
         public BVHDebuger bvh;
         private ComputeBuffer BVHBuffer;
+
+        public bool raySortingMode;
+        public TextMeshProUGUI text;
 
         private void Awake()
         {
@@ -198,7 +202,7 @@ namespace UnityTemplateProjects
             CreateMeshBuffers();
 
             kernels.Add(shaderRT.FindKernel("ShadowPass"));
-            //kernels.Add(shaderRT.FindKernel("ReflectionPass"));
+            kernels.Add(shaderRT.FindKernel("ReflectionPass"));
            // kernels.Add(shaderRT.FindKernel("AOPass"));
             
 
@@ -212,10 +216,10 @@ namespace UnityTemplateProjects
                 shaderRT.SetBuffer(kernel, "meshEbo", bufferMeshEbo);
                 shaderRT.SetBuffer(kernel, "bvhTree", BVHBuffer);
             
-                //shaderRT.SetTexture(kernel, "skybox", skybox);
+                shaderRT.SetTexture(kernel, "skybox", skybox);
             }
            
-            //shaderRT.SetTexture(1, "texOut", reflectionTexture);
+            shaderRT.SetTexture(1, "texOut", reflectionTexture);
             
             shaderReflections.SetTexture(0, "texOut", reflectionTexture);
             shaderReflections.SetBuffer(0, "bvhTree", BVHBuffer);
@@ -230,7 +234,7 @@ namespace UnityTemplateProjects
 
             shaderRT.SetMatrix("cameraToWorld", _cam.cameraToWorldMatrix);
             shaderRT.SetMatrix("cameraInvProj", _cam.projectionMatrix.inverse);
-            
+
 
             shaderSorter.SetTexture(0, "texOut", reflectionTexture);
             shaderSorter.SetMatrix("cameraToWorld", _cam.cameraToWorldMatrix);
@@ -248,21 +252,9 @@ namespace UnityTemplateProjects
 
             var position = directionalLight.transform.forward;
             shaderRT.SetVector("directionalLight", new Vector4(position.x, position.y, position.z, directionalLight.intensity));
-            
-            //shaderRT.SetVector("cameraPlanes", new Vector4(_cam.nearClipPlane, _cam.farClipPlane));
-            
+
             Mixer.SetTexture("_TracedShadows", tex);
             Mixer.SetTexture("_TracedReflections", cumulationTex);
-            
-//            shaderRT.Dispatch(kernelIndex, tex.width / 8, tex.height / 8, 1);
-
-            Vector4 pos = new Vector4(24.93f, 2.12f, -15, 1.0f);
-            pos = _cam.worldToCameraMatrix * pos;
-
-            pos = _cam.projectionMatrix.inverse * pos;
-            
-            pos /= pos.w;
-            pos = (pos / 2.0f) + Vector4.one;
 
             RenderPipelineManager.endCameraRendering += RenderPipelineManagerOnendCameraRendering;
         }
@@ -274,36 +266,44 @@ namespace UnityTemplateProjects
             CommandBuffer cmd = new CommandBuffer();
             cmd.name = "Hybrid Renderer";
             
-            // if (_sampleRate < 100) //stacking frames for TAA
+            shaderRT.SetMatrix("cameraToWorld", _cam.cameraToWorldMatrix);
+            shaderRT.SetMatrix("cameraInvProj", _cam.projectionMatrix.inverse);
+            
+             if (_sampleRate < 100) //stacking frames for TAA
             {
-               // buffer.SetData(spheres);
-
-               reflectionTexture.Release();
-               reflectionTexture.Create();
+                if (raySortingMode)
+                {
+                    reflectionTexture.Release();
+                    reflectionTexture.Create();
                
-               shaderSorter.SetTexture(0, "texOut", reflectionTexture);
-               shaderReflections.SetTexture(0, "texOut", reflectionTexture);
+                    shaderSorter.SetTexture(0, "texOut", reflectionTexture);
+                    shaderReflections.SetTexture(0, "texOut", reflectionTexture);
 
-               shaderSorter.SetFloats("pixelOffset", Random.value, Random.value);
-                shaderSorter.SetFloat("seed", Random.value);
+                    shaderSorter.SetFloats("pixelOffset", Random.value, Random.value);
+                    shaderSorter.SetFloat("seed", Random.value);
                 
-                shaderReflections.SetMatrix("worldToCamera", _cam.worldToCameraMatrix);
-                shaderReflections.SetMatrix("invProj", _cam.projectionMatrix);
+                    shaderReflections.SetMatrix("worldToCamera", _cam.worldToCameraMatrix);
+                    shaderReflections.SetMatrix("invProj", _cam.projectionMatrix);
                 
-                shaderSorter.SetMatrix("cameraToWorld", _cam.cameraToWorldMatrix);
-                shaderSorter.SetMatrix("cameraInvProj", _cam.projectionMatrix.inverse);
+                    shaderSorter.SetMatrix("cameraToWorld", _cam.cameraToWorldMatrix);
+                    shaderSorter.SetMatrix("cameraInvProj", _cam.projectionMatrix.inverse);
                 
-                bufferRays.SetCounterValue(0);
+                    bufferRays.SetCounterValue(0);
                 
-                shaderSorter.Dispatch( 0,reflectionTexture.width / 8, reflectionTexture.height / 8, 1);
+                    shaderSorter.Dispatch( 0,reflectionTexture.width / 8, reflectionTexture.height / 8, 1);
 
-                ComputeBuffer.CopyCount(bufferRays, bufferRaysCount, 0);
-                int[] a = new int[1];
+                    ComputeBuffer.CopyCount(bufferRays, bufferRaysCount, 0);
+                    int[] a = new int[1];
                 
-                bufferRaysCount.GetData(a);
+                    bufferRaysCount.GetData(a);
                 
-                if(a[0] > 64)
-                    shaderReflections.Dispatch(0, a[0] / 64, 1, 1);
+                    if(a[0] > 64)
+                        shaderReflections.Dispatch(0, a[0] / 64, 1, 1);
+                }
+                else
+                {
+                    cmd.DispatchCompute(shaderRT, 1, reflectionTexture.width / 8, reflectionTexture.height / 8, 1);
+                }
                 
                 
                 cmd.Blit(reflectionTexture, cumulationTex, AA);
@@ -311,23 +311,12 @@ namespace UnityTemplateProjects
                 AA.SetFloat(Sample, _sampleRate);
                 _sampleRate++;
             }
-            //Graphics.Blit(tex, cumulationTex, AA);
 
-            shaderRT.SetMatrix("cameraToWorld", _cam.cameraToWorldMatrix);
-            shaderRT.SetMatrix("cameraInvProj", _cam.projectionMatrix.inverse);
-            
-            
-
-            
             cmd.DispatchCompute(shaderRT, 0, tex.width / 8, tex.height / 8, 1);
-           // cmd.DispatchCompute(shaderReflections, 0, tex.width / 16, tex.height / 16, 1);
-           
+
             cmd.Blit(tex, arg2.activeTexture, Mixer);
             arg1.ExecuteCommandBuffer(cmd);
             cmd.Release();
-
-            //Graphics.Blit(screenTex, arg2.activeTexture, Mixer);
-            //Graphics.Blit(cumulationTex, arg2.camera.activeTexture);
         }
 
 
@@ -393,9 +382,6 @@ namespace UnityTemplateProjects
             bufferMeshEbo = new ComputeBuffer(ebos.Count, sizeof(int));
             bufferMeshEbo.SetData(ebos);
 
-            print(vertices.Count);
-            
-
             bufferMeshes = new ComputeBuffer(meshObjects.Count, sizeof(float) * 16 + 2 * sizeof(int) + 4 * sizeof(float));
             bufferMeshes.SetData(meshObjects);
             
@@ -442,47 +428,20 @@ namespace UnityTemplateProjects
         private void Update()
         {
             bool hasChanged = false;
-            if (Input.GetKey(KeyCode.LeftArrow))
-            {
-                var tmp = spheres[0];
-                tmp.Move(Vector3.left * Time.deltaTime);
-                spheres[0] = tmp;
 
-                hasChanged = true;
-            }
-            else if (Input.GetKey(KeyCode.RightArrow))
+            if (Input.GetKeyDown(KeyCode.O))
             {
-                var tmp = spheres[0];
-                tmp.Move(Vector3.right * Time.deltaTime);
-                spheres[0] = tmp;
-                hasChanged = true;
-            }
-            
-            
-            if (Input.GetKey(KeyCode.UpArrow))
-            {
-                var tmp = spheres[0];
-                tmp.Move(Vector3.up * Time.deltaTime);
-                spheres[0] = tmp;
-                hasChanged = true;
-            }
-            else if (Input.GetKey(KeyCode.DownArrow))
-            {
-                var tmp = spheres[0];
-                tmp.Move(Vector3.down * Time.deltaTime);
-                spheres[0] = tmp;
-                hasChanged = true;
+                raySortingMode = !raySortingMode;
+
+                text.text = raySortingMode ? "Sorting rays: activated" : "Sorting rays: deactivated";
             }
 
-            if (!hasChanged)
+            foreach (Transform transform1 in _transformsToWatch)
             {
-                foreach (Transform transform1 in _transformsToWatch)
-                {
-                    if (transform1.hasChanged)
-                        hasChanged = true;
+                if (transform1.hasChanged)
+                    hasChanged = true;
 
-                    transform1.hasChanged = false;
-                }
+                transform1.hasChanged = false;
             }
 
             if (hasChanged || transform.hasChanged)
