@@ -5,6 +5,8 @@ My work is to see how we can render some good quality effects with ray tracing w
 
 Don't hesitate to take a look at the pdf in the root of this repo, you will find a decent explanation of what I've done, with some benchmarks.
 
+![](pathrasterizer.gif)
+
 Some keywords used in my work: BVH, compute shaders, Unity, Rasterization and ray tracing.
 
 If you have any question about my work please feel free to contact me !
